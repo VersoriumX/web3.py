@@ -60,6 +60,7 @@ from web3._utils.validation import (
 from web3.exceptions import (
     InvalidAddress,
     NameNotFound,
+    Web3ValueError,
 )
 from web3.types import (
     ABI,
@@ -151,7 +152,7 @@ def abi_bytes_to_hex(
 
     num_bytes = abi_type.sub
     if len(bytes_data) > num_bytes:
-        raise ValueError(
+        raise Web3ValueError(
             f"This value was expected to be at most {num_bytes} bytes, "
             f"but instead was {len(bytes_data)}: {data!r}"
         )
@@ -273,8 +274,7 @@ def normalize_address_no_ens(address: ChecksumAddress) -> ChecksumAddress:
 def normalize_bytecode(bytecode: bytes) -> HexBytes:
     if bytecode:
         bytecode = HexBytes(bytecode)
-    # type ignored b/c bytecode is converted to HexBytes above
-    return bytecode  # type: ignore
+    return bytecode
 
 
 # --- async -- #

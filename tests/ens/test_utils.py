@@ -37,10 +37,10 @@ from web3.providers.eth_tester import (
 )
 
 
-def test_init_web3_adds_expected_middlewares():
+def test_init_web3_adds_expected_middleware():
     w3 = init_web3()
-    middlewares = map(str, w3.manager.middleware_onion)
-    assert "stalecheck_middleware" in next(middlewares)
+    middleware = w3.middleware_onion.middleware
+    assert middleware[0][1] == "stalecheck"
 
 
 @pytest.mark.parametrize(
@@ -157,7 +157,7 @@ def test_ens_encode_name_normalizes_name_before_encoding():
     ),
 )
 def test_normal_name_to_hash(name, hashed):
-    assert normal_name_to_hash(name).hex() == hashed
+    assert normal_name_to_hash(name).to_0x_hex() == hashed
 
 
 @pytest.mark.parametrize(
@@ -174,7 +174,9 @@ def test_normal_name_to_hash(name, hashed):
 def test_name_utility_methods_normalize_the_name_using_ensip15(utility_method):
     # we already have tests for `normalize_name_ensip15` so we just need to make sure
     # the utility methods call it under the hood with the correct arguments
-    with patch("ens.utils.normalize_name_ensip15") as normalize_name_ensip15_mock:
+    with patch(
+        "ens._normalization.normalize_name_ensip15"
+    ) as normalize_name_ensip15_mock:
         utility_method("foo.eth")
         normalize_name_ensip15_mock.assert_called_once_with("foo.eth")
 
@@ -188,7 +190,9 @@ def test_label_to_hash_normalizes_name_using_ensip15():
     )
     assert normalized_name.as_text == "foo.eth"
 
-    with patch("ens.utils.normalize_name_ensip15") as mock_normalize_name_ensip15:
+    with patch(
+        "ens._normalization.normalize_name_ensip15"
+    ) as mock_normalize_name_ensip15:
         for label in normalized_name.labels:
             mock_normalize_name_ensip15.return_value = ENSNormalizedName([label])
 
@@ -196,7 +200,7 @@ def test_label_to_hash_normalizes_name_using_ensip15():
             mock_normalize_name_ensip15.assert_called_once_with(label.text)
             mock_normalize_name_ensip15.reset_mock()
 
-    assert label_to_hash("foo").hex() == (
+    assert label_to_hash("foo").to_0x_hex() == (
         "0x41b1a0649752af1b28b3dc29a1556eee781e4a4c3a1f7f53f90fa834de098c4d"
     )
 
@@ -205,10 +209,10 @@ def test_label_to_hash_normalizes_name_using_ensip15():
 
 
 @pytest.mark.asyncio
-async def test_init_async_web3_adds_expected_async_middlewares():
+async def test_init_async_web3_adds_expected_async_middleware():
     async_w3 = init_async_web3()
-    middlewares = map(str, async_w3.manager.middleware_onion)
-    assert "stalecheck_middleware" in next(middlewares)
+    middleware = async_w3.middleware_onion.middleware
+    assert middleware[0][1] == "stalecheck"
 
 
 @pytest.mark.asyncio

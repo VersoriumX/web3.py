@@ -29,6 +29,7 @@ from eth_abi.codec import (
 from eth_typing import (
     ChecksumAddress,
     HexStr,
+    Primitives,
     TypeStr,
 )
 from eth_utils import (
@@ -75,6 +76,7 @@ from web3.exceptions import (
     InvalidEventABI,
     LogTopicError,
     MismatchedABI,
+    Web3ValueError,
 )
 from web3.types import (
     ABIEvent,
@@ -99,6 +101,12 @@ if TYPE_CHECKING:
     )
 
 
+def _log_entry_data_to_bytes(
+    log_entry_data: Union[Primitives, HexStr, str],
+) -> bytes:
+    return hexstr_if_str(to_bytes, log_entry_data)
+
+
 def construct_event_topic_set(
     event_abi: ABIEvent,
     abi_codec: ABICodec,
@@ -108,7 +116,7 @@ def construct_event_topic_set(
         arguments = {}
     if isinstance(arguments, (list, tuple)):
         if len(arguments) != len(event_abi["inputs"]):
-            raise ValueError(
+            raise Web3ValueError(
                 "When passing an argument list, the number of arguments must "
                 "match the event constructor."
             )
@@ -123,18 +131,18 @@ def construct_event_topic_set(
         for key, value in arguments.items()  # type: ignore
     }
 
-    # typed dict cannot be used w/ a normal Dict
-    # https://github.com/python/mypy/issues/4976
-    event_topic = encode_hex(event_abi_to_log_topic(event_abi))  # type: ignore
+    event_topic = encode_hex(event_abi_to_log_topic(event_abi))
     indexed_args = get_indexed_event_inputs(event_abi)
     zipped_abi_and_args = [
         (arg, normalized_args.get(arg["name"], [None])) for arg in indexed_args
     ]
     encoded_args = [
         [
-            None
-            if option is None
-            else encode_hex(abi_codec.encode([arg["type"]], [option]))
+            (
+                None
+                if option is None
+                else encode_hex(abi_codec.encode([arg["type"]], [option]))
+            )
             for option in arg_options
         ]
         for arg, arg_options in zipped_abi_and_args
@@ -153,7 +161,7 @@ def construct_event_data_set(
         arguments = {}
     if isinstance(arguments, (list, tuple)):
         if len(arguments) != len(event_abi["inputs"]):
-            raise ValueError(
+            raise Web3ValueError(
                 "When passing an argument list, the number of arguments must "
                 "match the event constructor."
             )
@@ -174,9 +182,11 @@ def construct_event_data_set(
     ]
     encoded_args = [
         [
-            None
-            if option is None
-            else encode_hex(abi_codec.encode([arg["type"]], [option]))
+            (
+                None
+                if option is None
+                else encode_hex(abi_codec.encode([arg["type"]], [option]))
+            )
             for option in arg_options
         ]
         for arg, arg_options in zipped_abi_and_args
@@ -224,23 +234,25 @@ def get_event_data(
         log_topics = log_entry["topics"]
     elif not log_entry["topics"]:
         raise MismatchedABI("Expected non-anonymous event to have 1 or more topics")
-    # type ignored b/c event_abi_to_log_topic(event_abi: Dict[str, Any])
-    elif event_abi_to_log_topic(event_abi) != log_entry["topics"][0]:  # type: ignore
+    elif event_abi_to_log_topic(dict(event_abi)) != _log_entry_data_to_bytes(
+        log_entry["topics"][0]
+    ):
         raise MismatchedABI("The event signature did not match the provided ABI")
     else:
         log_topics = log_entry["topics"][1:]
 
+    log_topics_bytes = [_log_entry_data_to_bytes(topic) for topic in log_topics]
     log_topics_abi = get_indexed_event_inputs(event_abi)
     log_topic_normalized_inputs = normalize_event_input_types(log_topics_abi)
     log_topic_types = get_event_abi_types_for_decoding(log_topic_normalized_inputs)
     log_topic_names = get_abi_input_names(ABIEvent({"inputs": log_topics_abi}))
 
-    if len(log_topics) != len(log_topic_types):
+    if len(log_topics_bytes) != len(log_topic_types):
         raise LogTopicError(
-            f"Expected {len(log_topic_types)} log topics.  Got {len(log_topics)}"
+            f"Expected {len(log_topic_types)} log topics.  Got {len(log_topics_bytes)}"
         )
 
-    log_data = hexstr_if_str(to_bytes, log_entry["data"])
+    log_data = _log_entry_data_to_bytes(log_entry["data"])
     log_data_abi = exclude_indexed_event_inputs(event_abi)
     log_data_normalized_inputs = normalize_event_input_types(log_data_abi)
     log_data_types = get_event_abi_types_for_decoding(log_data_normalized_inputs)
@@ -266,7 +278,7 @@ def get_event_data(
 
     decoded_topic_data = [
         abi_codec.decode([topic_type], topic_data)[0]
-        for topic_type, topic_data in zip(log_topic_types, log_topics)
+        for topic_type, topic_data in zip(log_topic_types, log_topics_bytes)
     ]
     normalized_topic_data = map_abi_data(
         BASE_RETURN_NORMALIZERS, log_topic_types, decoded_topic_data
@@ -328,8 +340,8 @@ is_not_indexed = complement(is_indexed)
 
 class BaseEventFilterBuilder:
     formatter = None
-    _fromBlock = None
-    _toBlock = None
+    _from_block = None
+    _to_block = None
     _address = None
     _immutable = False
 
@@ -349,30 +361,30 @@ class BaseEventFilterBuilder:
         self._ordered_arg_names = tuple(arg["name"] for arg in event_abi["inputs"])
 
     @property
-    def fromBlock(self) -> BlockIdentifier:
-        return self._fromBlock
+    def from_block(self) -> BlockIdentifier:
+        return self._from_block
 
-    @fromBlock.setter
-    def fromBlock(self, value: BlockIdentifier) -> None:
-        if self._fromBlock is None and not self._immutable:
-            self._fromBlock = value
+    @from_block.setter
+    def from_block(self, value: BlockIdentifier) -> None:
+        if self._from_block is None and not self._immutable:
+            self._from_block = value
         else:
-            raise ValueError(
-                f"fromBlock is already set to {self._fromBlock!r}. "
+            raise Web3ValueError(
+                f"from_block is already set to {self._from_block!r}. "
                 "Resetting filter parameters is not permitted"
             )
 
     @property
-    def toBlock(self) -> BlockIdentifier:
-        return self._toBlock
+    def to_block(self) -> BlockIdentifier:
+        return self._to_block
 
-    @toBlock.setter
-    def toBlock(self, value: BlockIdentifier) -> None:
-        if self._toBlock is None and not self._immutable:
-            self._toBlock = value
+    @to_block.setter
+    def to_block(self, value: BlockIdentifier) -> None:
+        if self._to_block is None and not self._immutable:
+            self._to_block = value
         else:
-            raise ValueError(
-                f"toBlock is already set to {self._toBlock!r}. "
+            raise Web3ValueError(
+                f"toBlock is already set to {self._to_block!r}. "
                 "Resetting filter parameters is not permitted"
             )
 
@@ -385,7 +397,7 @@ class BaseEventFilterBuilder:
         if self._address is None and not self._immutable:
             self._address = value
         else:
-            raise ValueError(
+            raise Web3ValueError(
                 f"address is already set to {self.address!r}. "
                 "Resetting filter parameters is not permitted"
             )
@@ -420,8 +432,8 @@ class BaseEventFilterBuilder:
     def filter_params(self) -> FilterParams:
         params = {
             "topics": self.topics,
-            "fromBlock": self.fromBlock,
-            "toBlock": self.toBlock,
+            "fromBlock": self.from_block,
+            "toBlock": self.to_block,
             "address": self.address,
         }
         return valfilter(lambda x: x is not None, params)
@@ -430,10 +442,10 @@ class BaseEventFilterBuilder:
 class EventFilterBuilder(BaseEventFilterBuilder):
     def deploy(self, w3: "Web3") -> "LogFilter":
         if not isinstance(w3, web3.Web3):
-            raise ValueError(f"Invalid web3 argument: got: {w3!r}")
+            raise Web3ValueError(f"Invalid web3 argument: got: {w3!r}")
 
-        for arg in AttributeDict.values(self.args):  # type: ignore[arg-type]
-            arg._immutable = True  # type: ignore[attr-defined]
+        for arg in self.args.values():
+            arg._immutable = True
         self._immutable = True
 
         log_filter = cast("LogFilter", w3.eth.filter(self.filter_params))
@@ -448,9 +460,9 @@ class EventFilterBuilder(BaseEventFilterBuilder):
 class AsyncEventFilterBuilder(BaseEventFilterBuilder):
     async def deploy(self, async_w3: "AsyncWeb3") -> "AsyncLogFilter":
         if not isinstance(async_w3, web3.AsyncWeb3):
-            raise ValueError(f"Invalid web3 argument: got: {async_w3!r}")
+            raise Web3ValueError(f"Invalid web3 argument: got: {async_w3!r}")
 
-        for arg in AttributeDict.values(self.args):  # type: ignore[arg-type]
+        for arg in AttributeDict.values(self.args):
             arg._immutable = True  # type: ignore[attr-defined]
         self._immutable = True
 
@@ -466,8 +478,7 @@ class AsyncEventFilterBuilder(BaseEventFilterBuilder):
 
 def initialize_event_topics(event_abi: ABIEvent) -> Union[bytes, List[Any]]:
     if event_abi["anonymous"] is False:
-        # https://github.com/python/mypy/issues/4976
-        return event_abi_to_log_topic(event_abi)  # type: ignore
+        return event_abi_to_log_topic(event_abi)
     else:
         return list()
 
@@ -506,19 +517,23 @@ class BaseArgumentFilter(ABC):
 
     def match_single(self, value: Any) -> None:
         if self._immutable:
-            raise ValueError("Setting values is forbidden after filter is deployed.")
+            raise Web3ValueError(
+                "Setting values is forbidden after filter is deployed."
+            )
         if self._match_values is None:
             self._match_values = _normalize_match_values((value,))
         else:
-            raise ValueError("An argument match value/s has already been set.")
+            raise Web3ValueError("An argument match value/s has already been set.")
 
     def match_any(self, *values: Collection[Any]) -> None:
         if self._immutable:
-            raise ValueError("Setting values is forbidden after filter is deployed.")
+            raise Web3ValueError(
+                "Setting values is forbidden after filter is deployed."
+            )
         if self._match_values is None:
             self._match_values = _normalize_match_values(values)
         else:
-            raise ValueError("An argument match value/s has already been set.")
+            raise Web3ValueError("An argument match value/s has already been set.")
 
     @property
     @abstractmethod

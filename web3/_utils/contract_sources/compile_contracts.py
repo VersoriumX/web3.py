@@ -42,7 +42,6 @@ filename with the ``-f`` (or ``--filename``) argument flag.
     reformatted ...
 """
 
-
 import argparse
 import os
 import re
@@ -117,7 +116,7 @@ contracts_in_file = {}
 
 def compile_files(file_list: List[str]) -> None:
     for filename in file_list:
-        with open(os.path.join(os.getcwd(), filename), "r") as f:
+        with open(os.path.join(os.getcwd(), filename)) as f:
             dot_sol_file = f.readlines()
 
         contract_names = []

@@ -4,6 +4,7 @@ from typing import (
     Any,
     Awaitable,
     Callable,
+    Dict,
     List,
     Optional,
     Tuple,
@@ -34,6 +35,9 @@ from web3._utils.async_transactions import (
 from web3._utils.blocks import (
     select_method_for_block_identifier,
 )
+from web3._utils.compat import (
+    Unpack,
+)
 from web3._utils.fee_utils import (
     async_fee_history_priority_fee,
 )
@@ -56,11 +60,14 @@ from web3.eth.base_eth import (
     BaseEth,
 )
 from web3.exceptions import (
-    MethodUnavailable,
+    MethodNotSupported,
     OffchainLookup,
     TimeExhausted,
     TooManyRequests,
+    TransactionIndexingInProgress,
     TransactionNotFound,
+    Web3RPCError,
+    Web3ValueError,
 )
 from web3.method import (
     Method,
@@ -74,13 +81,15 @@ from web3.types import (
     BlockData,
     BlockIdentifier,
     BlockParams,
-    CallOverride,
+    BlockReceipts,
+    CreateAccessListResponse,
     FeeHistory,
     FilterParams,
     LogReceipt,
     LogsSubscriptionArg,
     Nonce,
     SignedTx,
+    StateOverride,
     SubscriptionType,
     SyncStatus,
     TxData,
@@ -189,10 +198,11 @@ class AsyncEth(BaseEth):
         """
         try:
             return await self._max_priority_fee()
-        except (ValueError, MethodUnavailable):
+        except Web3RPCError:
             warnings.warn(
                 "There was an issue with the method eth_maxPriorityFeePerGas. "
-                "Calculating using eth_feeHistory."
+                "Calculating using eth_feeHistory.",
+                stacklevel=2,
             )
             return await async_fee_history_priority_fee(self)
 
@@ -233,6 +243,7 @@ class AsyncEth(BaseEth):
         newest_block: Union[BlockParams, BlockNumber],
         reward_percentiles: Optional[List[float]] = None,
     ) -> FeeHistory:
+        reward_percentiles = reward_percentiles or []
         return await self._fee_history(block_count, newest_block, reward_percentiles)
 
     # eth_call
@@ -242,7 +253,7 @@ class AsyncEth(BaseEth):
             [
                 TxParams,
                 Optional[BlockIdentifier],
-                Optional[CallOverride],
+                Optional[StateOverride],
             ],
             Awaitable[HexBytes],
         ]
@@ -252,7 +263,7 @@ class AsyncEth(BaseEth):
         self,
         transaction: TxParams,
         block_identifier: Optional[BlockIdentifier] = None,
-        state_override: Optional[CallOverride] = None,
+        state_override: Optional[StateOverride] = None,
         ccip_read_enabled: Optional[bool] = None,
     ) -> HexBytes:
         ccip_read_enabled_on_provider = self.w3.provider.global_ccip_read_enabled
@@ -273,12 +284,12 @@ class AsyncEth(BaseEth):
         self,
         transaction: TxParams,
         block_identifier: Optional[BlockIdentifier] = None,
-        state_override: Optional[CallOverride] = None,
+        state_override: Optional[StateOverride] = None,
     ) -> HexBytes:
         max_redirects = self.w3.provider.ccip_read_max_redirects
 
         if not max_redirects or max_redirects < 4:
-            raise ValueError(
+            raise Web3ValueError(
                 "ccip_read_max_redirects property on provider must be at least 4."
             )
 
@@ -294,16 +305,38 @@ class AsyncEth(BaseEth):
 
         raise TooManyRequests("Too many CCIP read redirects")
 
+    # eth_createAccessList
+
+    _create_access_list: Method[
+        Callable[
+            [TxParams, Optional[BlockIdentifier]],
+            Awaitable[CreateAccessListResponse],
+        ]
+    ] = Method(RPC.eth_createAccessList, mungers=[BaseEth.create_access_list_munger])
+
+    async def create_access_list(
+        self,
+        transaction: TxParams,
+        block_identifier: Optional[BlockIdentifier] = None,
+    ) -> CreateAccessListResponse:
+        return await self._create_access_list(transaction, block_identifier)
+
     # eth_estimateGas
 
     _estimate_gas: Method[
-        Callable[[TxParams, Optional[BlockIdentifier]], Awaitable[int]]
+        Callable[
+            [TxParams, Optional[BlockIdentifier], Optional[StateOverride]],
+            Awaitable[int],
+        ]
     ] = Method(RPC.eth_estimateGas, mungers=[BaseEth.estimate_gas_munger])
 
     async def estimate_gas(
-        self, transaction: TxParams, block_identifier: Optional[BlockIdentifier] = None
+        self,
+        transaction: TxParams,
+        block_identifier: Optional[BlockIdentifier] = None,
+        state_override: Optional[StateOverride] = None,
     ) -> int:
-        return await self._estimate_gas(transaction, block_identifier)
+        return await self._estimate_gas(transaction, block_identifier, state_override)
 
     # eth_getTransactionByHash
 
@@ -415,6 +448,20 @@ class AsyncEth(BaseEth):
     ) -> BlockData:
         return await self._get_block(block_identifier, full_transactions)
 
+    # eth_getBlockReceipts
+
+    _get_block_receipts: Method[
+        Callable[[BlockIdentifier], Awaitable[BlockReceipts]]
+    ] = Method(
+        RPC.eth_getBlockReceipts,
+        mungers=[default_root_munger],
+    )
+
+    async def get_block_receipts(
+        self, block_identifier: BlockIdentifier
+    ) -> BlockReceipts:
+        return await self._get_block_receipts(block_identifier)
+
     # eth_getBalance
 
     _get_balance: Method[
@@ -491,7 +538,10 @@ class AsyncEth(BaseEth):
         return await self._transaction_receipt(transaction_hash)
 
     async def wait_for_transaction_receipt(
-        self, transaction_hash: _Hash32, timeout: float = 120, poll_latency: float = 0.1
+        self,
+        transaction_hash: _Hash32,
+        timeout: Optional[float] = 120,
+        poll_latency: float = 0.1,
     ) -> TxReceipt:
         async def _wait_for_tx_receipt_with_timeout(
             _tx_hash: _Hash32, _poll_latency: float
@@ -499,7 +549,7 @@ class AsyncEth(BaseEth):
             while True:
                 try:
                     tx_receipt = await self._transaction_receipt(_tx_hash)
-                except TransactionNotFound:
+                except (TransactionNotFound, TransactionIndexingInProgress):
                     tx_receipt = None
                 if tx_receipt is not None:
                     break
@@ -547,10 +597,8 @@ class AsyncEth(BaseEth):
             self.w3, current_transaction, new_transaction
         )
 
-    # todo: Update Any to stricter kwarg checking with TxParams
-    # https://github.com/python/mypy/issues/4441
     async def modify_transaction(
-        self, transaction_hash: _Hash32, **transaction_params: Any
+        self, transaction_hash: _Hash32, **transaction_params: Unpack[TxParams]
     ) -> HexBytes:
         assert_valid_transaction_params(cast(TxParams, transaction_params))
 
@@ -594,14 +642,16 @@ class AsyncEth(BaseEth):
     # eth_signTypedData
 
     _sign_typed_data: Method[
-        Callable[[Union[Address, ChecksumAddress, ENS], str], Awaitable[HexStr]]
+        Callable[
+            [Union[Address, ChecksumAddress, ENS], Dict[str, Any]], Awaitable[HexStr]
+        ]
     ] = Method(
         RPC.eth_signTypedData,
         mungers=[default_root_munger],
     )
 
     async def sign_typed_data(
-        self, account: Union[Address, ChecksumAddress, ENS], data: str
+        self, account: Union[Address, ChecksumAddress, ENS], data: Dict[str, Any]
     ) -> HexStr:
         return await self._sign_typed_data(account, data)
 
@@ -688,7 +738,7 @@ class AsyncEth(BaseEth):
         ] = None,
     ) -> HexStr:
         if not isinstance(self.w3.provider, PersistentConnectionProvider):
-            raise MethodUnavailable(
+            raise MethodNotSupported(
                 "eth_subscribe is only supported with providers that support "
                 "persistent connections."
             )
@@ -705,7 +755,7 @@ class AsyncEth(BaseEth):
 
     async def unsubscribe(self, subscription_id: HexStr) -> bool:
         if not isinstance(self.w3.provider, PersistentConnectionProvider):
-            raise MethodUnavailable(
+            raise MethodNotSupported(
                 "eth_unsubscribe is only supported with providers that support "
                 "persistent connections."
             )
@@ -715,7 +765,8 @@ class AsyncEth(BaseEth):
     # -- contract methods -- #
 
     @overload
-    def contract(self, address: None = None, **kwargs: Any) -> Type[AsyncContract]:
+    # mypy error: Overloaded function signatures 1 and 2 overlap with incompatible return types  # noqa: E501
+    def contract(self, address: None = None, **kwargs: Any) -> Type[AsyncContract]:  # type: ignore[overload-overlap]  # noqa: E501
         ...
 
     @overload

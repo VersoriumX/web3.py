@@ -75,8 +75,10 @@ from web3._utils.normalizers import (
     abi_string_to_text,
 )
 from web3.exceptions import (
-    BlockNumberOutofRange,
+    BlockNumberOutOfRange,
+    Web3TypeError,
     Web3ValidationError,
+    Web3ValueError,
 )
 from web3.types import (
     ABI,
@@ -136,9 +138,9 @@ def find_matching_event_abi(
     if len(event_abi_candidates) == 1:
         return event_abi_candidates[0]
     elif not event_abi_candidates:
-        raise ValueError("No matching events found")
+        raise Web3ValueError("No matching events found")
     else:
-        raise ValueError("Multiple events found")
+        raise Web3ValueError("Multiple events found")
 
 
 def find_matching_fn_abi(
@@ -159,7 +161,7 @@ def find_matching_fn_abi(
         return get_receive_func_abi(abi)
 
     if not is_text(fn_identifier):
-        raise TypeError("Unsupported function identifier")
+        raise Web3TypeError("Unsupported function identifier")
 
     name_filter = functools.partial(filter_by_name, fn_identifier)
     arg_count_filter = functools.partial(filter_by_argument_count, num_arguments)
@@ -217,7 +219,7 @@ def encode_abi(
     argument_types = get_abi_input_types(abi)
 
     if not check_if_arguments_can_be_encoded(abi, w3.codec, arguments, {}):
-        raise TypeError(
+        raise Web3TypeError(
             "One or more arguments could not be encoded to the necessary "
             f"ABI type. Expected types are: {', '.join(argument_types)}"
         )
@@ -274,7 +276,7 @@ def prepare_transaction(
         prepared_transaction = cast(TxParams, dict(**transaction))
 
     if "data" in prepared_transaction:
-        raise ValueError("Transaction parameter may not contain a 'data' key")
+        raise Web3ValueError("Transaction parameter may not contain a 'data' key")
 
     if address:
         prepared_transaction.setdefault("to", address)
@@ -317,7 +319,7 @@ def encode_transaction_data(
             kwargs,
         )
     else:
-        raise TypeError("Unsupported function identifier")
+        raise Web3TypeError("Unsupported function identifier")
 
     return add_0x_prefix(encode_abi(w3, fn_abi, fn_arguments, fn_selector))
 
@@ -327,8 +329,7 @@ def decode_transaction_data(
     data: HexStr,
     normalizers: Sequence[Callable[[TypeStr, Any], Tuple[TypeStr, Any]]] = None,
 ) -> Dict[str, Any]:
-    # type ignored b/c expects data arg to be HexBytes
-    data = HexBytes(data)  # type: ignore
+    data = HexBytes(data)
     types = get_abi_input_types(fn_abi)
     abi_codec = ABICodec(default_registry)
     decoded = abi_codec.decode(types, HexBytes(data[4:]))
@@ -373,9 +374,7 @@ def get_function_info(
     if fn_abi is None:
         fn_abi = find_matching_fn_abi(contract_abi, abi_codec, fn_name, args, kwargs)
 
-    # typed dict cannot be used w/ a normal Dict
-    # https://github.com/python/mypy/issues/4976
-    fn_selector = encode_hex(function_abi_to_4byte_selector(fn_abi))  # type: ignore
+    fn_selector = encode_hex(function_abi_to_4byte_selector(fn_abi))
 
     fn_arguments = merge_args_and_kwargs(fn_abi, args, kwargs)
 
@@ -385,7 +384,8 @@ def get_function_info(
 
 
 def validate_payable(transaction: TxParams, abi: ABIFunction) -> None:
-    """Raise Web3ValidationError if non-zero ether
+    """
+    Raise Web3ValidationError if non-zero ether
     is sent to a non-payable function.
     """
     if "value" in transaction:
@@ -424,7 +424,7 @@ def parse_block_identifier(
     ):
         return w3.eth.get_block(block_identifier)["number"]
     else:
-        raise BlockNumberOutofRange
+        raise BlockNumberOutOfRange
 
 
 def parse_block_identifier_int(w3: "Web3", block_identifier_int: int) -> BlockNumber:
@@ -434,25 +434,8 @@ def parse_block_identifier_int(w3: "Web3", block_identifier_int: int) -> BlockNu
         last_block = w3.eth.get_block("latest")["number"]
         block_num = last_block + block_identifier_int + 1
         if block_num < 0:
-            raise BlockNumberOutofRange
+            raise BlockNumberOutOfRange
     return BlockNumber(block_num)
-
-
-def parse_block_identifier_no_extra_call(
-    w3: Union["Web3", "AsyncWeb3"], block_identifier: BlockIdentifier
-) -> BlockIdentifier:
-    if block_identifier is None:
-        return w3.eth.default_block
-    elif isinstance(block_identifier, int) and block_identifier >= 0:
-        return block_identifier
-    elif block_identifier in ["latest", "earliest", "pending", "safe", "finalized"]:
-        return block_identifier
-    elif isinstance(block_identifier, bytes):
-        return HexBytes(block_identifier)
-    elif is_hex_encoded_block_hash(block_identifier):
-        return HexStr(str(block_identifier))
-    else:
-        raise BlockNumberOutofRange
 
 
 async def async_parse_block_identifier(
@@ -470,7 +453,7 @@ async def async_parse_block_identifier(
         requested_block = await async_w3.eth.get_block(block_identifier)
         return requested_block["number"]
     else:
-        raise BlockNumberOutofRange
+        raise BlockNumberOutOfRange
 
 
 async def async_parse_block_identifier_int(
@@ -483,5 +466,5 @@ async def async_parse_block_identifier_int(
         last_block_num = last_block["number"]
         block_num = last_block_num + block_identifier_int + 1
         if block_num < 0:
-            raise BlockNumberOutofRange
+            raise BlockNumberOutOfRange
     return BlockNumber(block_num)

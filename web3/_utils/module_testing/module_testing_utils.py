@@ -1,9 +1,13 @@
-import time
+from collections import (
+    deque,
+)
 from typing import (
     TYPE_CHECKING,
     Any,
+    Collection,
     Dict,
     Generator,
+    Literal,
     Sequence,
     Union,
 )
@@ -18,13 +22,13 @@ from eth_typing import (
 from eth_utils import (
     is_same_address,
 )
+from flaky import (
+    flaky,
+)
 from hexbytes import (
     HexBytes,
 )
 
-from web3._utils.compat import (
-    Literal,
-)
 from web3._utils.request import (
     async_cache_and_return_session,
     cache_and_return_session,
@@ -40,17 +44,17 @@ if TYPE_CHECKING:
     from requests import Response  # noqa: F401
 
     from web3 import Web3  # noqa: F401
+    from web3._utils.compat import (  # noqa: F401
+        Self,
+    )
 
 
-def mine_pending_block(w3: "Web3") -> None:
-    timeout = 10
-
-    w3.geth.miner.start()  # type: ignore
-    start = time.time()
-    while time.time() < start + timeout:
-        if len(w3.eth.get_block("pending")["transactions"]) == 0:
-            break
-    w3.geth.miner.stop()  # type: ignore
+"""
+flaky_geth_dev_mining decorator for tests requiring a pending block
+for the duration of the test. This behavior can be flaky
+due to timing of the test running as a block is mined.
+"""
+flaky_geth_dev_mining = flaky(max_runs=3)
 
 
 def assert_contains_log(
@@ -98,7 +102,7 @@ def mock_offchain_lookup_request_response(
 
         # mock response only to specified url while validating appropriate fields
         if url_from_args == mocked_request_url:
-            assert kwargs["timeout"] == 10
+            assert kwargs["timeout"] == 30
             if http_method.upper() == "POST":
                 assert kwargs["data"] == {"data": calldata, "sender": sender}
             return MockedResponse()
@@ -148,7 +152,7 @@ def async_mock_offchain_lookup_request_response(
 
         # mock response only to specified url while validating appropriate fields
         if url_from_args == mocked_request_url:
-            assert kwargs["timeout"] == ClientTimeout(10)
+            assert kwargs["timeout"] == ClientTimeout(30)
             if http_method.upper() == "post":
                 assert kwargs["data"] == {"data": calldata, "sender": sender}
             return AsyncMockedResponse()
@@ -162,3 +166,44 @@ def async_mock_offchain_lookup_request_response(
     monkeypatch.setattr(
         f"aiohttp.ClientSession.{http_method.lower()}", _mock_specific_request
     )
+
+
+class WebSocketMessageStreamMock:
+    closed: bool = False
+
+    def __init__(
+        self, messages: Collection[bytes] = None, raise_exception: Exception = None
+    ) -> None:
+        self.messages = deque(messages) if messages else deque()
+        self.raise_exception = raise_exception
+
+    def __await__(self) -> Generator[Any, Any, "Self"]:
+        async def __async_init__() -> "Self":
+            return self
+
+        return __async_init__().__await__()
+
+    def __aiter__(self) -> "Self":
+        return self
+
+    async def __anext__(self) -> bytes:
+        if self.raise_exception:
+            raise self.raise_exception
+
+        elif len(self.messages) == 0:
+            raise StopAsyncIteration
+
+        return self.messages.popleft()
+
+    @staticmethod
+    async def pong() -> Literal[False]:
+        return False
+
+    async def connect(self) -> None:
+        pass
+
+    async def send(self, data: bytes) -> None:
+        pass
+
+    async def close(self) -> None:
+        pass

@@ -10,7 +10,6 @@ from typing import (
     Sequence,
     Tuple,
     Type,
-    TypeVar,
     Union,
 )
 import warnings
@@ -22,6 +21,9 @@ from eth_utils.toolz import (
     pipe,
 )
 
+from web3._utils.batching import (
+    RPC_METHODS_UNSUPPORTED_DURING_BATCH,
+)
 from web3._utils.method_formatters import (
     get_error_formatters,
     get_null_result_formatters,
@@ -32,15 +34,22 @@ from web3._utils.rpc_abi import (
     RPC,
 )
 from web3.exceptions import (
+    MethodNotSupported,
+    Web3TypeError,
     Web3ValidationError,
+    Web3ValueError,
 )
 from web3.types import (
     RPCEndpoint,
+    TFunc,
     TReturn,
 )
 
 if TYPE_CHECKING:
-    from web3 import Web3  # noqa: F401
+    from web3 import (  # noqa: F401
+        PersistentConnectionProvider,
+        Web3,
+    )
     from web3.module import Module  # noqa: F401
 
 
@@ -82,11 +91,9 @@ def default_root_munger(_module: "Module", *args: Any) -> List[Any]:
     return [*args]
 
 
-TFunc = TypeVar("TFunc", bound=Callable[..., Any])
-
-
 class Method(Generic[TFunc]):
-    """Method object for web3 module methods
+    """
+    Method object for web3 module methods
 
     Calls to the Method go through these steps:
 
@@ -146,15 +153,31 @@ class Method(Generic[TFunc]):
         self.is_property = is_property
 
     def __get__(
-        self, obj: Optional["Module"] = None, obj_type: Optional[Type["Module"]] = None
+        self,
+        module: Optional["Module"] = None,
+        _type: Optional[Type["Module"]] = None,
     ) -> TFunc:
-        if obj is None:
-            raise TypeError(
+        self._module = module
+        if module is None:
+            raise Web3TypeError(
                 "Direct calls to methods are not supported. "
-                "Methods must be called from an module instance, "
+                "Methods must be called from a module instance, "
                 "usually attached to a web3 instance."
             )
-        return obj.retrieve_caller_fn(self)
+
+        provider = module.w3.provider
+        if hasattr(provider, "_is_batching") and provider._is_batching:
+            if self.json_rpc_method in RPC_METHODS_UNSUPPORTED_DURING_BATCH:
+                raise MethodNotSupported(
+                    f"Method `{self.json_rpc_method}` is not supported within a batch "
+                    "request."
+                )
+            return module.retrieve_request_information(self)
+        else:
+            return module.retrieve_caller_fn(self)
+
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        return self.__get__(self._module)(*args, **kwargs)
 
     @property
     def method_selector_fn(
@@ -165,7 +188,7 @@ class Method(Generic[TFunc]):
             return self.json_rpc_method
         elif isinstance(self.json_rpc_method, (str,)):
             return lambda *_: self.json_rpc_method
-        raise ValueError(
+        raise Web3ValueError(
             "``json_rpc_method`` config invalid.  May be a string or function"
         )
 
@@ -230,5 +253,6 @@ class DeprecatedMethod:
         warnings.warn(
             f"{self.old_name} is deprecated in favor of {self.new_name}",
             category=DeprecationWarning,
+            stacklevel=2,
         )
         return self.method.__get__(obj, obj_type)

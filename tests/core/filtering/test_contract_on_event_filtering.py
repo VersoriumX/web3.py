@@ -11,17 +11,17 @@ def test_create_filter_address_parameter(
     emitter, emitter_contract_factory, call_deployed_contract
 ):
     if call_deployed_contract:
-        event_filter = emitter.events.LogNoArguments.create_filter(fromBlock="latest")
+        event_filter = emitter.events.LogNoArguments.create_filter(from_block="latest")
     else:
         event_filter = emitter_contract_factory.events.LogNoArguments.create_filter(
-            fromBlock="latest"
+            from_block="latest"
         )
 
     if call_deployed_contract:
         # Assert this is a single string value, and not a list of addresses
         assert is_address(event_filter.filter_params["address"])
     else:
-        #  Undeployed contract shouldnt have address...
+        #  Undeployed contract shouldn't have address...
         assert "address" not in event_filter.filter_params
 
 
@@ -158,7 +158,7 @@ def test_on_sync_filter_with_event_name_and_non_indexed_argument(
 
     post_event_filter = contract.events.LogTripleWithIndex.create_filter(
         argument_filters={"arg0": 1, "arg1": 2},
-        fromBlock=0,
+        from_block=0,
     )
 
     old_logs = post_event_filter.get_all_entries()
@@ -212,7 +212,7 @@ def test_on_sync_filter_with_topic_filter_options_on_old_apis(
 
     post_event_filter = contract.events.LogTripleWithIndex.create_filter(
         argument_filters={"arg1": [1, 2], "arg2": [1, 2]},
-        fromBlock=0,
+        from_block=0,
     )
 
     old_logs = post_event_filter.get_all_entries()
@@ -236,12 +236,12 @@ async def test_async_create_filter_address_parameter(
 ):
     if call_deployed_contract:
         event_filter = await async_emitter.events.LogNoArguments.create_filter(
-            fromBlock="latest"
+            from_block="latest"
         )
     else:
         event_filter = (
             await async_emitter_contract_factory.events.LogNoArguments.create_filter(
-                fromBlock="latest"
+                from_block="latest"
             )
         )
 
@@ -249,7 +249,7 @@ async def test_async_create_filter_address_parameter(
         # Assert this is a single string value, and not a list of addresses
         assert is_address(event_filter.filter_params["address"])
     else:
-        #  Undeployed contract shouldnt have address...
+        #  Undeployed contract shouldn't have address...
         assert "address" not in event_filter.filter_params
 
 
@@ -403,7 +403,7 @@ async def test_on_async_filter_with_event_name_and_non_indexed_argument(
 
     post_event_filter = await contract.events.LogTripleWithIndex.create_filter(
         argument_filters={"arg0": 1, "arg1": 2},
-        fromBlock=0,
+        from_block=0,
     )
 
     old_logs = await post_event_filter.get_all_entries()
@@ -469,7 +469,7 @@ async def test_on_async_filter_with_topic_filter_options_on_old_apis(
 
     post_event_filter = await contract.events.LogTripleWithIndex.create_filter(
         argument_filters={"arg1": [1, 2], "arg2": [1, 2]},
-        fromBlock=0,
+        from_block=0,
     )
 
     old_logs = await post_event_filter.get_all_entries()

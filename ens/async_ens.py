@@ -46,6 +46,7 @@ from ens.constants import (
 )
 from ens.exceptions import (
     AddressMismatch,
+    ENSValueError,
     ResolverNotFound,
     UnauthorizedError,
     UnownedName,
@@ -71,12 +72,14 @@ if TYPE_CHECKING:
         AsyncContractFunction,
     )
     from web3.main import AsyncWeb3  # noqa: F401
+    from web3.middleware.base import (  # noqa: F401
+        Middleware,
+    )
     from web3.providers import (  # noqa: F401
         AsyncBaseProvider,
         BaseProvider,
     )
     from web3.types import (  # noqa: F401
-        AsyncMiddleware,
         TxParams,
     )
 
@@ -87,7 +90,7 @@ class AsyncENS(BaseENS):
     like getting the address for a name.
 
     Unless otherwise specified, all addresses are assumed to be a `str` in
-    `checksum format <https://github.com/ethereum/EIPs/blob/master/EIPS/eip-155.md>`_,
+    `checksum format <https://github.com/ethereum/EIPs/blob/master/EIPS/eip-155.md>`_,  # blocklint: pragma # noqa: E501
     like: ``"0x314159265dD8dbb310642f98f50C066173C1259b"``
     """
 
@@ -96,9 +99,9 @@ class AsyncENS(BaseENS):
 
     def __init__(
         self,
-        provider: "AsyncBaseProvider" = cast("AsyncBaseProvider", default),
+        provider: "AsyncBaseProvider" = None,
         addr: ChecksumAddress = None,
-        middlewares: Optional[Sequence[Tuple["AsyncMiddleware", str]]] = None,
+        middleware: Optional[Sequence[Tuple["Middleware", str]]] = None,
     ) -> None:
         """
         :param provider: a single provider used to connect to Ethereum
@@ -106,7 +109,8 @@ class AsyncENS(BaseENS):
         :param hex-string addr: the address of the ENS registry on-chain.
             If not provided, ENS.py will default to the mainnet ENS registry address.
         """
-        self.w3 = init_async_web3(provider, middlewares)
+        provider = provider or cast("AsyncBaseProvider", default)
+        self.w3 = init_async_web3(provider, middleware)
 
         ens_addr = addr if addr else ENS_MAINNET_ADDR
         self.ens = self.w3.eth.contract(abi=abis.ENS, address=ens_addr)
@@ -127,10 +131,8 @@ class AsyncENS(BaseENS):
             provided, defaults to the mainnet ENS registry address.
         """
         provider = w3.manager.provider
-        middlewares = w3.middleware_onion.middlewares
-        ns = cls(
-            cast("AsyncBaseProvider", provider), addr=addr, middlewares=middlewares
-        )
+        middleware = w3.middleware_onion.middleware
+        ns = cls(cast("AsyncBaseProvider", provider), addr=addr, middleware=middleware)
 
         # inherit strict bytes checking from w3 instance
         ns.strict_bytes_type_checking = w3.strict_bytes_type_checking
@@ -167,7 +169,7 @@ class AsyncENS(BaseENS):
     async def setup_address(
         self,
         name: str,
-        address: Union[Address, ChecksumAddress, HexAddress] = cast(
+        address: Union[Address, ChecksumAddress, HexAddress] = cast(  # noqa: B008
             ChecksumAddress, default
         ),
         coin_type: Optional[int] = None,
@@ -204,7 +206,7 @@ class AsyncENS(BaseENS):
         elif is_binary_address(address):
             address = to_checksum_address(cast(str, address))
         elif not is_checksum_address(address):
-            raise ValueError("You must supply the address in checksum format")
+            raise ENSValueError("You must supply the address in checksum format")
         if await self.address(name) == address:
             return None
         if address is None:
@@ -282,7 +284,7 @@ class AsyncENS(BaseENS):
             if is_binary_address(address):
                 address = to_checksum_address(address)
             if not is_checksum_address(address):
-                raise ValueError("You must supply the address in checksum format")
+                raise ENSValueError("You must supply the address in checksum format")
             await self._assert_control(address, name)
             if not resolved:
                 await self.setup_address(name, address, transact=transact)
@@ -305,7 +307,7 @@ class AsyncENS(BaseENS):
     async def setup_owner(
         self,
         name: str,
-        new_owner: ChecksumAddress = cast(ChecksumAddress, default),
+        new_owner: ChecksumAddress = None,
         transact: Optional["TxParams"] = None,
     ) -> Optional[ChecksumAddress]:
         """
@@ -332,6 +334,7 @@ class AsyncENS(BaseENS):
         :raises UnauthorizedError: if ``'from'`` in `transact` does not own `name`
         :returns: the new owner's address
         """
+        new_owner = new_owner or cast(ChecksumAddress, default)
         if not transact:
             transact = {}
         transact = deepcopy(transact)
@@ -466,9 +469,9 @@ class AsyncENS(BaseENS):
             resolver_addr = await self.address("resolver.eth")
         namehash = raw_name_to_hash(name)
         if await self.ens.caller.resolver(namehash) != resolver_addr:
-            await self.ens.functions.setResolver(  # type: ignore
-                namehash, resolver_addr
-            ).transact(transact)
+            await self.ens.functions.setResolver(namehash, resolver_addr).transact(
+                transact
+            )
         return cast("AsyncContract", self._resolver_contract(address=resolver_addr))
 
     async def _resolve(
@@ -490,7 +493,7 @@ class AsyncENS(BaseENS):
         ):
             contract_func_with_args = (fn_name, [node])
 
-            calldata = resolver.encodeABI(*contract_func_with_args)
+            calldata = resolver.encode_abi(*contract_func_with_args)
             contract_call_result = await resolver.caller.resolve(
                 ens_encode_name(normal_name),
                 calldata,
@@ -550,7 +553,7 @@ class AsyncENS(BaseENS):
         transact = deepcopy(transact)
         transact["from"] = old_owner or owner
         for label in reversed(unowned):
-            await self.ens.functions.setSubnodeOwner(  # type: ignore
+            await self.ens.functions.setSubnodeOwner(
                 raw_name_to_hash(owned),
                 label_to_hash(label),
                 owner,

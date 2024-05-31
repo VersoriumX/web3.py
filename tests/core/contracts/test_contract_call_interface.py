@@ -30,9 +30,15 @@ from web3._utils.contract_sources.contract_data.bytes_contracts import (
 from web3._utils.ens import (
     contract_ens_addresses,
 )
+from web3.contract.async_contract import (
+    AsyncContractFunction,
+)
+from web3.contract.contract import (
+    ContractFunction,
+)
 from web3.exceptions import (
     BadFunctionCallOutput,
-    BlockNumberOutofRange,
+    BlockNumberOutOfRange,
     FallbackNotFound,
     InvalidAddress,
     MismatchedABI,
@@ -532,7 +538,7 @@ def test_call_nonexistent_receive_function(fallback_function_contract):
 
 def test_throws_error_if_block_out_of_range(w3, math_contract):
     w3.provider.make_request(method="evm_mine", params=[20])
-    with pytest.raises(BlockNumberOutofRange):
+    with pytest.raises(BlockNumberOutOfRange):
         math_contract.functions.counter().call(block_identifier=-50)
 
 
@@ -1149,6 +1155,15 @@ def test_changing_default_block_identifier(w3, math_contract):
     assert math_contract.functions.counter().call(block_identifier=None) == 7
 
 
+def test_functions_iterator(w3, math_contract):
+    all_functions = math_contract.all_functions()
+    functions_iter = math_contract.functions
+
+    for fn, expected_fn in zip(iter(functions_iter), all_functions):
+        assert isinstance(fn, ContractFunction)
+        assert fn.fn_name == expected_fn.fn_name
+
+
 # -- async -- #
 
 
@@ -1711,7 +1726,7 @@ async def test_async_call_nonexistent_receive_function(
 @pytest.mark.asyncio
 async def test_async_throws_error_if_block_out_of_range(async_w3, async_math_contract):
     await async_w3.provider.make_request(method="evm_mine", params=[20])
-    with pytest.raises(BlockNumberOutofRange):
+    with pytest.raises(BlockNumberOutOfRange):
         await async_math_contract.functions.counter().call(block_identifier=-50)
 
 
@@ -2313,3 +2328,12 @@ async def test_async_changing_default_block_identifier(async_w3, async_math_cont
     assert (
         await async_math_contract.functions.counter().call(block_identifier=None) == 7
     )
+
+
+def test_async_functions_iterator(async_w3, async_math_contract):
+    all_functions = async_math_contract.all_functions()
+    functions_iter = async_math_contract.functions
+
+    for fn, expected_fn in zip(iter(functions_iter), all_functions):
+        assert isinstance(fn, AsyncContractFunction)
+        assert fn.fn_name == expected_fn.fn_name

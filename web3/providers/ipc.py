@@ -14,9 +14,11 @@ from types import (
 )
 from typing import (
     Any,
-    Optional,
+    List,
+    Tuple,
     Type,
     Union,
+    cast,
 )
 
 from web3._utils.threads import (
@@ -27,6 +29,13 @@ from web3.types import (
     RPCResponse,
 )
 
+from .._utils.batching import (
+    sort_batch_response_by_response_ids,
+)
+from ..exceptions import (
+    Web3TypeError,
+    Web3ValueError,
+)
 from .base import (
     JSONBaseProvider,
 )
@@ -86,62 +95,40 @@ class PersistantSocket:
         return self.sock
 
 
-def get_default_ipc_path() -> Optional[str]:
+def get_default_ipc_path() -> str:
     if sys.platform == "darwin":
-        ipc_path = os.path.expanduser(
-            os.path.join("~", "Library", "Ethereum", "geth.ipc")
-        )
-        if os.path.exists(ipc_path):
-            return ipc_path
-        return None
+        return os.path.expanduser(os.path.join("~", "Library", "Ethereum", "geth.ipc"))
 
     elif sys.platform.startswith("linux") or sys.platform.startswith("freebsd"):
-        ipc_path = os.path.expanduser(os.path.join("~", ".ethereum", "geth.ipc"))
-        if os.path.exists(ipc_path):
-            return ipc_path
-        return None
+        return os.path.expanduser(os.path.join("~", ".ethereum", "geth.ipc"))
 
     elif sys.platform == "win32":
-        ipc_path = r"\\.\pipe\geth.ipc"
-        if os.path.exists(ipc_path):
-            return ipc_path
-        return None
+        return r"\\.\pipe\geth.ipc"
 
     else:
-        raise ValueError(
-            f"Unsupported platform '{sys.platform}'.  Only darwin/linux/win32/"
+        raise Web3ValueError(
+            f"Unsupported platform '{sys.platform}'. Only darwin/linux/win32/"
             "freebsd are supported.  You must specify the ipc_path"
         )
 
 
-def get_dev_ipc_path() -> Optional[str]:
+def get_dev_ipc_path() -> str:
     if os.environ.get("WEB3_PROVIDER_URI", ""):
-        ipc_path = os.environ.get("WEB3_PROVIDER_URI")
-        if os.path.exists(ipc_path):
-            return ipc_path
-        return None
+        return os.environ.get("WEB3_PROVIDER_URI")
 
     elif sys.platform == "darwin":
         tmpdir = os.environ.get("TMPDIR", "")
-        ipc_path = os.path.expanduser(os.path.join(tmpdir, "geth.ipc"))
-        if os.path.exists(ipc_path):
-            return ipc_path
-        return None
+        return os.path.expanduser(os.path.join(tmpdir, "geth.ipc"))
 
     elif sys.platform.startswith("linux") or sys.platform.startswith("freebsd"):
-        ipc_path = os.path.expanduser(os.path.join("/tmp", "geth.ipc"))
-        if os.path.exists(ipc_path):
-            return ipc_path
-        return None
+        return os.path.expanduser(os.path.join("/tmp", "geth.ipc"))
 
     elif sys.platform == "win32":
-        ipc_path = os.path.join("\\\\", ".", "pipe", "geth.ipc")
-        if os.path.exists(ipc_path):
-            return ipc_path
+        return r"\\.\pipe\geth.ipc"
 
     else:
-        raise ValueError(
-            f"Unsupported platform '{sys.platform}'.  Only darwin/linux/win32/"
+        raise Web3ValueError(
+            f"Unsupported platform '{sys.platform}'. Only darwin/linux/win32/"
             "freebsd are supported.  You must specify the ipc_path"
         )
 
@@ -153,8 +140,7 @@ class IPCProvider(JSONBaseProvider):
     def __init__(
         self,
         ipc_path: Union[str, Path] = None,
-        timeout: int = 10,
-        *args: Any,
+        timeout: int = 30,
         **kwargs: Any,
     ) -> None:
         if ipc_path is None:
@@ -162,22 +148,17 @@ class IPCProvider(JSONBaseProvider):
         elif isinstance(ipc_path, str) or isinstance(ipc_path, Path):
             self.ipc_path = str(Path(ipc_path).expanduser().resolve())
         else:
-            raise TypeError("ipc_path must be of type string or pathlib.Path")
+            raise Web3TypeError("ipc_path must be of type string or pathlib.Path")
 
         self.timeout = timeout
         self._lock = threading.Lock()
         self._socket = PersistantSocket(self.ipc_path)
-        super().__init__()
+        super().__init__(**kwargs)
 
     def __str__(self) -> str:
         return f"<{self.__class__.__name__} {self.ipc_path}>"
 
-    def make_request(self, method: RPCEndpoint, params: Any) -> RPCResponse:
-        self.logger.debug(
-            f"Making request IPC. Path: {self.ipc_path}, Method: {method}"
-        )
-        request = self.encode_rpc_request(method, params)
-
+    def _make_request(self, request: bytes) -> RPCResponse:
         with self._lock, self._socket as sock:
             try:
                 sock.sendall(request)
@@ -207,6 +188,21 @@ class IPCProvider(JSONBaseProvider):
                     else:
                         timeout.sleep(0)
                         continue
+
+    def make_request(self, method: RPCEndpoint, params: Any) -> RPCResponse:
+        self.logger.debug(
+            f"Making request IPC. Path: {self.ipc_path}, Method: {method}"
+        )
+        request = self.encode_rpc_request(method, params)
+        return self._make_request(request)
+
+    def make_batch_request(
+        self, requests: List[Tuple[RPCEndpoint, Any]]
+    ) -> List[RPCResponse]:
+        self.logger.debug(f"Making batch request IPC. Path: {self.ipc_path}")
+        request_data = self.encode_batch_rpc_request(requests)
+        response = cast(List[RPCResponse], self._make_request(request_data))
+        return sort_batch_response_by_response_ids(response)
 
 
 # A valid JSON RPC response can only end in } or ] http://www.jsonrpc.org/specification

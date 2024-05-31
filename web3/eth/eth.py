@@ -2,6 +2,7 @@ from typing import (
     TYPE_CHECKING,
     Any,
     Callable,
+    Dict,
     List,
     Optional,
     Sequence,
@@ -28,6 +29,9 @@ from hexbytes import (
 
 from web3._utils.blocks import (
     select_method_for_block_identifier,
+)
+from web3._utils.compat import (
+    Unpack,
 )
 from web3._utils.fee_utils import (
     fee_history_priority_fee,
@@ -56,11 +60,13 @@ from web3.eth.base_eth import (
     BaseEth,
 )
 from web3.exceptions import (
-    MethodUnavailable,
     OffchainLookup,
     TimeExhausted,
     TooManyRequests,
+    TransactionIndexingInProgress,
     TransactionNotFound,
+    Web3RPCError,
+    Web3ValueError,
 )
 from web3.method import (
     Method,
@@ -71,7 +77,7 @@ from web3.types import (
     BlockData,
     BlockIdentifier,
     BlockParams,
-    CallOverride,
+    BlockReceipts,
     CreateAccessListResponse,
     FeeHistory,
     FilterParams,
@@ -79,6 +85,7 @@ from web3.types import (
     MerkleProof,
     Nonce,
     SignedTx,
+    StateOverride,
     SyncStatus,
     TxData,
     TxParams,
@@ -183,10 +190,11 @@ class Eth(BaseEth):
         """
         try:
             return self._max_priority_fee()
-        except (ValueError, MethodUnavailable):
+        except Web3RPCError:
             warnings.warn(
                 "There was an issue with the method eth_maxPriorityFeePerGas. "
-                "Calculating using eth_feeHistory."
+                "Calculating using eth_feeHistory.",
+                stacklevel=2,
             )
             return fee_history_priority_fee(self)
 
@@ -226,13 +234,14 @@ class Eth(BaseEth):
         newest_block: Union[BlockParams, BlockNumber],
         reward_percentiles: Optional[List[float]] = None,
     ) -> FeeHistory:
+        reward_percentiles = reward_percentiles or []
         return self._fee_history(block_count, newest_block, reward_percentiles)
 
     # eth_call
 
     _call: Method[
         Callable[
-            [TxParams, Optional[BlockIdentifier], Optional[CallOverride]],
+            [TxParams, Optional[BlockIdentifier], Optional[StateOverride]],
             HexBytes,
         ]
     ] = Method(RPC.eth_call, mungers=[BaseEth.call_munger])
@@ -241,7 +250,7 @@ class Eth(BaseEth):
         self,
         transaction: TxParams,
         block_identifier: Optional[BlockIdentifier] = None,
-        state_override: Optional[CallOverride] = None,
+        state_override: Optional[StateOverride] = None,
         ccip_read_enabled: Optional[bool] = None,
     ) -> HexBytes:
         ccip_read_enabled_on_provider = self.w3.provider.global_ccip_read_enabled
@@ -262,12 +271,12 @@ class Eth(BaseEth):
         self,
         transaction: TxParams,
         block_identifier: Optional[BlockIdentifier] = None,
-        state_override: Optional[CallOverride] = None,
+        state_override: Optional[StateOverride] = None,
     ) -> HexBytes:
         max_redirects = self.w3.provider.ccip_read_max_redirects
 
         if not max_redirects or max_redirects < 4:
-            raise ValueError(
+            raise Web3ValueError(
                 "ccip_read_max_redirects property on provider must be at least 4."
             )
 
@@ -301,13 +310,16 @@ class Eth(BaseEth):
     # eth_estimateGas
 
     _estimate_gas: Method[
-        Callable[[TxParams, Optional[BlockIdentifier]], int]
+        Callable[[TxParams, Optional[BlockIdentifier], Optional[StateOverride]], int]
     ] = Method(RPC.eth_estimateGas, mungers=[BaseEth.estimate_gas_munger])
 
     def estimate_gas(
-        self, transaction: TxParams, block_identifier: Optional[BlockIdentifier] = None
+        self,
+        transaction: TxParams,
+        block_identifier: Optional[BlockIdentifier] = None,
+        state_override: Optional[StateOverride] = None,
     ) -> int:
-        return self._estimate_gas(transaction, block_identifier)
+        return self._estimate_gas(transaction, block_identifier, state_override)
 
     # eth_getTransactionByHash
 
@@ -406,6 +418,16 @@ class Eth(BaseEth):
     ) -> BlockData:
         return self._get_block(block_identifier, full_transactions)
 
+    # eth_getBlockReceipts
+
+    _get_block_receipts: Method[Callable[[BlockIdentifier], BlockReceipts]] = Method(
+        RPC.eth_getBlockReceipts,
+        mungers=[default_root_munger],
+    )
+
+    def get_block_receipts(self, block_identifier: BlockIdentifier) -> BlockReceipts:
+        return self._get_block_receipts(block_identifier)
+
     # eth_getBalance
 
     _get_balance: Method[
@@ -484,7 +506,7 @@ class Eth(BaseEth):
                 while True:
                     try:
                         tx_receipt = self._transaction_receipt(transaction_hash)
-                    except TransactionNotFound:
+                    except (TransactionNotFound, TransactionIndexingInProgress):
                         tx_receipt = None
                     if tx_receipt is not None:
                         break
@@ -577,10 +599,8 @@ class Eth(BaseEth):
         current_transaction = get_required_transaction(self.w3, transaction_hash)
         return replace_transaction(self.w3, current_transaction, new_transaction)
 
-    # todo: Update Any to stricter kwarg checking with TxParams
-    # https://github.com/python/mypy/issues/4441
     def modify_transaction(
-        self, transaction_hash: _Hash32, **transaction_params: Any
+        self, transaction_hash: _Hash32, **transaction_params: Unpack[TxParams]
     ) -> HexBytes:
         assert_valid_transaction_params(cast(TxParams, transaction_params))
         current_transaction = get_required_transaction(self.w3, transaction_hash)
@@ -606,7 +626,7 @@ class Eth(BaseEth):
     # eth_signTypedData
 
     sign_typed_data: Method[
-        Callable[[Union[Address, ChecksumAddress, ENS], str], HexStr]
+        Callable[[Union[Address, ChecksumAddress, ENS], Dict[str, Any]], HexStr]
     ] = Method(
         RPC.eth_signTypedData,
         mungers=[default_root_munger],
@@ -660,7 +680,8 @@ class Eth(BaseEth):
     )
 
     @overload
-    def contract(self, address: None = None, **kwargs: Any) -> Type[Contract]:
+    # type error: Overloaded function signatures 1 and 2 overlap with incompatible return types  # noqa: E501
+    def contract(self, address: None = None, **kwargs: Any) -> Type[Contract]:  # type: ignore[overload-overlap]  # noqa: E501
         ...
 
     @overload

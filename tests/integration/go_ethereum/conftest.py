@@ -8,7 +8,6 @@ import subprocess
 import zipfile
 
 from eth_utils import (
-    is_checksum_address,
     is_dict,
     to_text,
 )
@@ -35,8 +34,7 @@ from .utils import (
 )
 
 KEYFILE_PW = "web3py-test"
-
-GETH_FIXTURE_ZIP = "geth-1.11.6-fixture.zip"
+GETH_FIXTURE_ZIP = "geth-1.13.14-fixture.zip"
 
 
 @pytest.fixture(scope="module")
@@ -75,7 +73,17 @@ def get_geth_version(geth_binary):
         get_geth_version,
     )
 
-    return get_geth_version(geth_executable=os.path.expanduser(geth_binary))
+    geth_version = get_geth_version(geth_executable=os.path.expanduser(geth_binary))
+
+    fixture_geth_version = GETH_FIXTURE_ZIP.split("-")[1]
+    if fixture_geth_version not in str(geth_version):
+        raise AssertionError(
+            f"geth fixture version `{fixture_geth_version}` does not match geth "
+            f"version for binary being used to run the test suite: `{geth_version}`. "
+            "For CI runs, make sure to update the geth version in the CI config file."
+        )
+
+    return geth_version
 
 
 @pytest.fixture(scope="module")
@@ -83,15 +91,18 @@ def base_geth_command_arguments(geth_binary, datadir):
     return (
         geth_binary,
         "--datadir",
-        str(datadir),
-        "--nodiscover",
-        "--fakepow",
+        datadir,
+        "--dev",
+        "--dev.period",
+        "5",  # dev.period > 1 for tests which require pending blocks
+        "--password",
+        os.path.join(datadir, "keystore", "pw.txt"),
     )
 
 
 @pytest.fixture(scope="module")
 def geth_zipfile_version(get_geth_version):
-    if get_geth_version.major == 1 and get_geth_version.minor in [10, 11]:
+    if get_geth_version.major == 1 and get_geth_version.minor in [11, 12, 13]:
         return GETH_FIXTURE_ZIP
     raise AssertionError("Unsupported geth version")
 
@@ -181,39 +192,18 @@ def emitter_contract_address(emitter_contract, address_conversion_func):
 
 
 @pytest.fixture(scope="module")
-def unlocked_account(w3, unlockable_account, unlockable_account_pw):
-    w3.geth.personal.unlock_account(unlockable_account, unlockable_account_pw)
-    yield unlockable_account
-    w3.geth.personal.lock_account(unlockable_account)
+def keyfile_account_pkey(geth_fixture_data):
+    return geth_fixture_data["keyfile_account_pkey"]
 
 
 @pytest.fixture(scope="module")
-def unlockable_account_pw(geth_fixture_data):
-    return geth_fixture_data["keyfile_pw"]
+def keyfile_account_address(geth_fixture_data):
+    return geth_fixture_data["keyfile_account_address"]
 
 
 @pytest.fixture(scope="module")
-def unlockable_account(coinbase):
-    yield coinbase
-
-
-@pytest.fixture(scope="module")
-def unlockable_account_dual_type(unlockable_account, address_conversion_func):
-    return address_conversion_func(unlockable_account)
-
-
-@pytest.fixture(scope="module")
-def unlocked_account_dual_type(w3, unlockable_account_dual_type, unlockable_account_pw):
-    w3.geth.personal.unlock_account(unlockable_account_dual_type, unlockable_account_pw)
-    yield unlockable_account_dual_type
-    w3.geth.personal.lock_account(unlockable_account_dual_type)
-
-
-@pytest.fixture(scope="module")
-def funded_account_for_raw_txn(geth_fixture_data):
-    account = geth_fixture_data["raw_txn_account"]
-    assert is_checksum_address(account)
-    return account
+def keyfile_account_address_dual_type(keyfile_account_address, address_conversion_func):
+    yield keyfile_account_address
 
 
 @pytest.fixture(scope="module")
@@ -296,42 +286,15 @@ async def async_coinbase(async_w3):
 
 
 @pytest_asyncio.fixture(scope="module")
-async def async_unlockable_account(async_coinbase):
-    yield async_coinbase
+async def async_keyfile_account_address(geth_fixture_data):
+    return geth_fixture_data["keyfile_account_address"]
 
 
 @pytest_asyncio.fixture(scope="module")
-def async_unlockable_account_dual_type(
-    async_unlockable_account,
-    address_conversion_func,
+async def async_keyfile_account_address_dual_type(
+    async_keyfile_account_address, address_conversion_func
 ):
-    return address_conversion_func(async_unlockable_account)
-
-
-@pytest_asyncio.fixture(scope="module")
-async def async_unlocked_account(
-    async_w3,
-    async_unlockable_account,
-    unlockable_account_pw,
-):
-    await async_w3.geth.personal.unlock_account(
-        async_unlockable_account, unlockable_account_pw
-    )
-    yield async_unlockable_account
-    await async_w3.geth.personal.lock_account(async_unlockable_account)
-
-
-@pytest_asyncio.fixture(scope="module")
-async def async_unlocked_account_dual_type(
-    async_w3,
-    async_unlockable_account_dual_type,
-    unlockable_account_pw,
-):
-    await async_w3.geth.personal.unlock_account(
-        async_unlockable_account_dual_type, unlockable_account_pw
-    )
-    yield async_unlockable_account_dual_type
-    await async_w3.geth.personal.lock_account(async_unlockable_account_dual_type)
+    yield async_keyfile_account_address
 
 
 @pytest.fixture(scope="module")

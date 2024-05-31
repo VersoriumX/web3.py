@@ -10,6 +10,9 @@ from eth_abi.exceptions import (
 from web3._utils.filters import (
     match_fn,
 )
+from web3.exceptions import (
+    Web3ValueError,
+)
 
 
 @pytest.mark.parametrize(
@@ -96,7 +99,7 @@ from web3._utils.filters import (
                     ("bytes3[]", ((b"aye", b"bee"),)),
                     ("string[]", (("sea", "dee"),)),
                 ),
-                id="lists with valud string and bytes values",
+                id="lists with valid string and bytes values",
             )
         ),
         (
@@ -218,5 +221,5 @@ def test_wrong_type_match_data(w3):
     )
     abi_types, match_data = zip(*match_data_and_abi)
     encoded_data = w3.codec.encode(abi_types, data)
-    with pytest.raises(ValueError):
+    with pytest.raises(Web3ValueError):
         match_fn(w3.codec, match_data_and_abi, encoded_data)

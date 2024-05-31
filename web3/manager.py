@@ -5,6 +5,7 @@ from typing import (
     Any,
     AsyncGenerator,
     Callable,
+    Coroutine,
     List,
     Optional,
     Sequence,
@@ -23,6 +24,9 @@ from websockets.exceptions import (
     ConnectionClosedOK,
 )
 
+from web3._utils.batching import (
+    RequestBatcher,
+)
 from web3._utils.caching import (
     generate_cache_key,
 )
@@ -35,32 +39,37 @@ from web3.datastructures import (
 from web3.exceptions import (
     BadResponseFormat,
     MethodUnavailable,
+    ProviderConnectionError,
+    TaskNotRunning,
+    Web3RPCError,
+    Web3TypeError,
+)
+from web3.method import (
+    Method,
 )
 from web3.middleware import (
-    abi_middleware,
-    async_attrdict_middleware,
-    async_buffered_gas_estimate_middleware,
-    async_gas_price_strategy_middleware,
-    async_name_to_address_middleware,
-    async_validation_middleware,
-    attrdict_middleware,
-    buffered_gas_estimate_middleware,
-    gas_price_strategy_middleware,
-    name_to_address_middleware,
-    validation_middleware,
+    AttributeDictMiddleware,
+    BufferedGasEstimateMiddleware,
+    ENSNameToAddressMiddleware,
+    GasPriceStrategyMiddleware,
+    ValidationMiddleware,
+)
+from web3.middleware.base import (
+    Middleware,
+    MiddlewareOnion,
 )
 from web3.module import (
     apply_result_formatters,
 )
 from web3.providers import (
     AutoProvider,
+    JSONBaseProvider,
     PersistentConnectionProvider,
 )
+from web3.providers.async_base import (
+    AsyncJSONBaseProvider,
+)
 from web3.types import (
-    AsyncMiddleware,
-    AsyncMiddlewareOnion,
-    Middleware,
-    MiddlewareOnion,
     RPCEndpoint,
     RPCResponse,
 )
@@ -70,11 +79,14 @@ if TYPE_CHECKING:
         AsyncWeb3,
         Web3,
     )
+    from web3.middleware.base import (  # noqa: F401
+        Web3Middleware,
+    )
     from web3.providers import (  # noqa: F401
         AsyncBaseProvider,
         BaseProvider,
     )
-    from web3.providers.websocket.request_processor import (  # noqa: F401
+    from web3.providers.persistent.request_processor import (  # noqa: F401
         RequestProcessor,
     )
 
@@ -88,6 +100,7 @@ def _raise_bad_response_format(response: RPCResponse, error: str = "") -> None:
     raw_response = f"The raw response is: {response}"
 
     if error is not None and error != "":
+        error = error[:-1] if error.endswith(".") else error
         message = f"{message} {error}. {raw_response}"
     else:
         message = f"{message} {raw_response}"
@@ -118,22 +131,121 @@ def apply_null_result_formatters(
         return response
 
 
-class RequestManager:
-    logger = logging.getLogger("web3.RequestManager")
+def _validate_subscription_fields(response: RPCResponse) -> None:
+    params = response["params"]
+    subscription = params["subscription"]
+    if not isinstance(subscription, str) and not len(subscription) == 34:
+        _raise_bad_response_format(
+            response, "eth_subscription 'params' must include a 'subscription' field."
+        )
 
-    middleware_onion: Union[
-        MiddlewareOnion, AsyncMiddlewareOnion, NamedElementOnion[None, None]
-    ]
+
+def _validate_response(
+    response: RPCResponse,
+    error_formatters: Optional[Callable[..., Any]],
+    is_subscription_response: bool = False,
+    logger: Optional[logging.Logger] = None,
+) -> None:
+    if "jsonrpc" not in response or response["jsonrpc"] != "2.0":
+        _raise_bad_response_format(
+            response, 'The "jsonrpc" field must be present with a value of "2.0".'
+        )
+
+    response_id = response.get("id")
+    if "id" in response:
+        int_error_msg = (
+            '"id" must be an integer or a string representation of an integer.'
+        )
+        if response_id is None and "error" in response:
+            # errors can sometimes have null `id`, according to the JSON-RPC spec
+            pass
+        elif not isinstance(response_id, (str, int)):
+            _raise_bad_response_format(response, int_error_msg)
+        elif isinstance(response_id, str):
+            try:
+                int(response_id)
+            except ValueError:
+                _raise_bad_response_format(response, int_error_msg)
+    elif is_subscription_response:
+        # if `id` is not present, this must be a subscription response
+        _validate_subscription_fields(response)
+    else:
+        _raise_bad_response_format(
+            response,
+            'Response must include an "id" field or be formatted as an '
+            "`eth_subscription` response.",
+        )
+
+    if all(key in response for key in {"error", "result"}):
+        _raise_bad_response_format(
+            response, 'Response cannot include both "error" and "result".'
+        )
+    elif (
+        not any(key in response for key in {"error", "result"})
+        and not is_subscription_response
+    ):
+        _raise_bad_response_format(
+            response, 'Response must include either "error" or "result".'
+        )
+    elif "error" in response:
+        error = response["error"]
+
+        # raise the error when the value is a string
+        if error is None or not isinstance(error, dict):
+            _raise_bad_response_format(
+                response,
+                'response["error"] must be a valid object as defined by the '
+                "JSON-RPC 2.0 specification.",
+            )
+
+        # errors must include an integer code
+        code = error.get("code")
+        if not isinstance(code, int):
+            _raise_bad_response_format(
+                response, 'error["code"] is required and must be an integer value.'
+            )
+        elif code == METHOD_NOT_FOUND:
+            exception = MethodUnavailable(
+                repr(error),
+                rpc_response=response,
+                user_message=(
+                    "This method is not available. Check your node provider or your "
+                    "client's API docs to see what methods are supported and / or "
+                    "currently enabled."
+                ),
+            )
+            logger.error(exception.user_message)
+            logger.debug(f"RPC error response: {response}")
+            raise exception
+
+        # errors must include a message
+        error_message = error.get("message")
+        if not isinstance(error_message, str):
+            _raise_bad_response_format(
+                response, 'error["message"] is required and must be a string value.'
+            )
+
+        apply_error_formatters(error_formatters, response)
+
+        web3_rpc_error = Web3RPCError(repr(error), rpc_response=response)
+        logger.error(web3_rpc_error.user_message)
+        logger.debug(f"RPC error response: {response}")
+        raise web3_rpc_error
+
+    elif "result" not in response and not is_subscription_response:
+        _raise_bad_response_format(response)
+
+
+class RequestManager:
+    logger = logging.getLogger("web3.manager.RequestManager")
+
+    middleware_onion: Union["MiddlewareOnion", NamedElementOnion[None, None]]
 
     def __init__(
         self,
         w3: Union["AsyncWeb3", "Web3"],
         provider: Optional[Union["BaseProvider", "AsyncBaseProvider"]] = None,
-        middlewares: Optional[
-            Union[
-                Sequence[Tuple[Middleware, str]], Sequence[Tuple[AsyncMiddleware, str]]
-            ]
-        ] = None,
+        middleware: Optional[Sequence[Tuple[Middleware, str]]] = None,
     ) -> None:
         self.w3 = w3
 
@@ -142,14 +254,10 @@ class RequestManager:
         else:
             self.provider = provider
 
-        if middlewares is None:
-            middlewares = (
-                self.async_default_middlewares()
-                if self.provider.is_async
-                else self.default_middlewares(cast("Web3", w3))
-            )
+        if middleware is None:
+            middleware = self.get_default_middleware()
 
-        self.middleware_onion = NamedElementOnion(middlewares)
+        self.middleware_onion = NamedElementOnion(middleware)
 
         if isinstance(provider, PersistentConnectionProvider):
             # set up the request processor to be able to properly process ordered
@@ -169,33 +277,17 @@ class RequestManager:
         self._provider = provider
 
     @staticmethod
-    def default_middlewares(w3: "Web3") -> List[Tuple[Middleware, str]]:
+    def get_default_middleware() -> List[Tuple[Middleware, str]]:
         """
-        List the default middlewares for the request manager.
-        Leaving w3 unspecified will prevent the middleware from resolving names.
+        List the default middleware for the request manager.
         Documentation should remain in sync with these defaults.
         """
         return [
-            (gas_price_strategy_middleware, "gas_price_strategy"),
-            (name_to_address_middleware(w3), "name_to_address"),
-            (attrdict_middleware, "attrdict"),
-            (validation_middleware, "validation"),
-            (abi_middleware, "abi"),
-            (buffered_gas_estimate_middleware, "gas_estimate"),
-        ]
-
-    @staticmethod
-    def async_default_middlewares() -> List[Tuple[AsyncMiddleware, str]]:
-        """
-        List the default async middlewares for the request manager.
-        Documentation should remain in sync with these defaults.
-        """
-        return [
-            (async_gas_price_strategy_middleware, "gas_price_strategy"),
-            (async_name_to_address_middleware, "name_to_address"),
-            (async_attrdict_middleware, "attrdict"),
-            (async_validation_middleware, "validation"),
-            (async_buffered_gas_estimate_middleware, "gas_estimate"),
+            (GasPriceStrategyMiddleware, "gas_price_strategy"),
+            (ENSNameToAddressMiddleware, "ens_name_to_address"),
+            (AttributeDictMiddleware, "attrdict"),
+            (ValidationMiddleware, "validation"),
+            (BufferedGasEstimateMiddleware, "gas_estimate"),
         ]
 
     #
@@ -206,7 +298,7 @@ class RequestManager:
     ) -> RPCResponse:
         provider = cast("BaseProvider", self.provider)
         request_func = provider.request_func(
-            cast("Web3", self.w3), cast(MiddlewareOnion, self.middleware_onion)
+            cast("Web3", self.w3), cast("MiddlewareOnion", self.middleware_onion)
         )
         self.logger.debug(f"Making request. Method: {method}")
         return request_func(method, params)
@@ -216,8 +308,7 @@ class RequestManager:
     ) -> RPCResponse:
         provider = cast("AsyncBaseProvider", self.provider)
         request_func = await provider.request_func(
-            cast("AsyncWeb3", self.w3),
-            cast(AsyncMiddlewareOnion, self.middleware_onion),
+            cast("AsyncWeb3", self.w3), cast("MiddlewareOnion", self.middleware_onion)
         )
         self.logger.debug(f"Making request. Method: {method}")
         return await request_func(method, params)
@@ -231,85 +322,41 @@ class RequestManager:
     #
     # See also: https://www.jsonrpc.org/specification
     #
-    @staticmethod
     def formatted_response(
+        self,
         response: RPCResponse,
         params: Any,
         error_formatters: Optional[Callable[..., Any]] = None,
         null_result_formatters: Optional[Callable[..., Any]] = None,
     ) -> Any:
-        # jsonrpc is not enforced (as per the spec) but if present, it must be 2.0
-        if "jsonrpc" in response and response["jsonrpc"] != "2.0":
-            _raise_bad_response_format(
-                response, 'The "jsonrpc" field must be present with a value of "2.0"'
-            )
+        is_subscription_response = (
+            response.get("method") == "eth_subscription"
+            and response.get("params") is not None
+            and response["params"].get("subscription") is not None
+            and response["params"].get("result") is not None
+        )
 
-        # id is not enforced (as per the spec) but if present, it must be a
-        # string or integer
-        # TODO: v7 - enforce id per the spec
-        if "id" in response:
-            response_id = response["id"]
-            # id is always None for errors
-            if response_id is None and "error" not in response:
-                _raise_bad_response_format(
-                    response, '"id" must be None when an error is present'
-                )
-            elif not isinstance(response_id, (str, int, type(None))):
-                _raise_bad_response_format(response, '"id" must be a string or integer')
+        _validate_response(
+            response,
+            error_formatters,
+            is_subscription_response=is_subscription_response,
+            logger=self.logger,
+        )
 
-        # Response may not include both "error" and "result"
-        if "error" in response and "result" in response:
-            _raise_bad_response_format(
-                response, 'Response cannot include both "error" and "result"'
-            )
-
-        # Format and validate errors
-        elif "error" in response:
-            error = response.get("error")
-            # Raise the error when the value is a string
-            if error is None or isinstance(error, str):
-                raise ValueError(error)
-
-            # Errors must include an integer code
-            code = error.get("code")
-            if not isinstance(code, int):
-                _raise_bad_response_format(response, "error['code'] must be an integer")
-            elif code == METHOD_NOT_FOUND:
-                raise MethodUnavailable(error)
-
-            # Errors must include a message
-            if not isinstance(error.get("message"), str):
-                _raise_bad_response_format(
-                    response, "error['message'] must be a string"
-                )
-
-            apply_error_formatters(error_formatters, response)
-
-            raise ValueError(error)
-
-        # Format and validate results
-        elif "result" in response:
+        # format results
+        if "result" in response:
             # Null values for result should apply null_result_formatters
             # Skip when result not present in the response (fallback to False)
             if response.get("result", False) in NULL_RESPONSES:
                 apply_null_result_formatters(null_result_formatters, response, params)
             return response.get("result")
 
-        # Response from eth_subscription includes response["params"]["result"]
-        elif (
-            response.get("method") == "eth_subscription"
-            and response.get("params") is not None
-            and response["params"].get("subscription") is not None
-            and response["params"].get("result") is not None
-        ):
+        # response from eth_subscription includes response["params"]["result"]
+        elif is_subscription_response:
             return {
                 "subscription": response["params"]["subscription"],
                 "result": response["params"]["result"],
             }
-
-        # Any other response type raises BadResponseFormat
-        else:
-            _raise_bad_response_format(response)
 
     def request_blocking(
         self,
@@ -341,63 +388,141 @@ class RequestManager:
             response, params, error_formatters, null_result_formatters
         )
 
-    # persistent connection
-    async def ws_send(self, method: RPCEndpoint, params: Any) -> RPCResponse:
+    # -- batch requests management -- #
+
+    def _batch_requests(self) -> RequestBatcher[Method[Callable[..., Any]]]:
+        """
+        Context manager for making batch requests
+        """
+        if not isinstance(self.provider, (AsyncJSONBaseProvider, JSONBaseProvider)):
+            raise Web3TypeError("Batch requests are not supported by this provider.")
+        return RequestBatcher(self.w3)
+
+    def _make_batch_request(
+        self, requests_info: List[Tuple[Tuple["RPCEndpoint", Any], Sequence[Any]]]
+    ) -> List[RPCResponse]:
+        """
+        Make a batch request using the provider
+        """
+        provider = cast(JSONBaseProvider, self.provider)
+        request_func = provider.batch_request_func(
+            cast("Web3", self.w3), cast("MiddlewareOnion", self.middleware_onion)
+        )
+        responses = request_func(
+            [
+                (method, params)
+                for (method, params), _response_formatters in requests_info
+            ]
+        )
+        formatted_responses = [
+            self._format_batched_response(info, resp)
+            for info, resp in zip(requests_info, responses)
+        ]
+        return list(formatted_responses)
+
+    async def _async_make_batch_request(
+        self,
+        requests_info: List[
+            Coroutine[Any, Any, Tuple[Tuple["RPCEndpoint", Any], Sequence[Any]]]
+        ],
+    ) -> List[RPCResponse]:
+        """
+        Make an asynchronous batch request using the provider
+        """
+        provider = cast(AsyncJSONBaseProvider, self.provider)
+        request_func = await provider.batch_request_func(
+            cast("AsyncWeb3", self.w3),
+            cast("MiddlewareOnion", self.middleware_onion),
+        )
+        # since we add items to the batch without awaiting, we unpack the coroutines
+        # and await them all here
+        unpacked_requests_info = await asyncio.gather(*requests_info)
+        responses = await request_func(
+            [
+                (method, params)
+                for (method, params), _response_formatters in unpacked_requests_info
+            ]
+        )
+
+        if isinstance(self.provider, PersistentConnectionProvider):
+            # call _process_response for each response in the batch
+            return [await self._process_response(resp) for resp in responses]
+
+        formatted_responses = [
+            self._format_batched_response(info, resp)
+            for info, resp in zip(unpacked_requests_info, responses)
+        ]
+        return list(formatted_responses)
+
+    def _format_batched_response(
+        self,
+        requests_info: Tuple[Tuple[RPCEndpoint, Any], Sequence[Any]],
+        response: RPCResponse,
+    ) -> RPCResponse:
+        result_formatters, error_formatters, null_result_formatters = requests_info[1]
+        return apply_result_formatters(
+            result_formatters,
+            self.formatted_response(
+                response,
+                requests_info[0][1],
+                error_formatters,
+                null_result_formatters,
+            ),
+        )
+
+    # -- persistent connection -- #
+
+    async def send(self, method: RPCEndpoint, params: Any) -> RPCResponse:
         provider = cast(PersistentConnectionProvider, self._provider)
         request_func = await provider.request_func(
-            cast("AsyncWeb3", self.w3),
-            cast(AsyncMiddlewareOnion, self.middleware_onion),
+            cast("AsyncWeb3", self.w3), cast("MiddlewareOnion", self.middleware_onion)
         )
         self.logger.debug(
-            "Making request to open websocket connection - "
-            f"uri: {provider.endpoint_uri}, method: {method}"
+            "Making request to open socket connection: "
+            f"{provider.get_endpoint_uri_or_ipc_path()}, method: {method}"
         )
         response = await request_func(method, params)
-        return await self._process_ws_response(response)
+        return await self._process_response(response)
 
-    async def ws_recv(self) -> Any:
-        return await self._ws_recv_stream().__anext__()
+    def _persistent_message_stream(self) -> "_AsyncPersistentMessageStream":
+        return _AsyncPersistentMessageStream(self)
 
-    def _persistent_recv_stream(self) -> "_AsyncPersistentRecvStream":
-        return _AsyncPersistentRecvStream(self)
+    async def _get_next_message(self) -> Any:
+        return await self._message_stream().__anext__()
 
-    async def _ws_recv_stream(self) -> AsyncGenerator[RPCResponse, None]:
+    async def _message_stream(self) -> AsyncGenerator[RPCResponse, None]:
         if not isinstance(self._provider, PersistentConnectionProvider):
-            raise TypeError(
-                "Only websocket providers that maintain an open, persistent connection "
-                "can listen to websocket recv streams."
+            raise Web3TypeError(
+                "Only providers that maintain an open, persistent connection "
+                "can listen to streams."
+            )
+
+        if self._provider._message_listener_task is None:
+            raise ProviderConnectionError(
+                "No listener found for persistent connection."
             )
 
         while True:
-            # sleep(0) here seems to be the most efficient way to yield control back to
-            # the event loop while waiting for the response to be cached or received on
-            # the websocket.
-            await asyncio.sleep(0)
+            try:
+                response = await self._request_processor.pop_raw_response(
+                    subscription=True
+                )
+                if (
+                    response is not None
+                    and response.get("params", {}).get("subscription")
+                    in self._request_processor.active_subscriptions
+                ):
+                    # if response is an active subscription response, process it
+                    yield await self._process_response(response)
+            except TaskNotRunning:
+                self._provider._handle_listener_task_exceptions()
+                self.logger.error(
+                    "Message listener background task has stopped unexpectedly. "
+                    "Stopping message stream."
+                )
+                raise StopAsyncIteration
 
-            # look in the cache for a response
-            response = self._request_processor.pop_raw_response(subscription=True)
-            if response is not None:
-                break
-            else:
-                # if no response in the cache, check the websocket connection
-                if not self._provider._ws_lock.locked():
-                    async with self._provider._ws_lock:
-                        try:
-                            # keep timeout low but reasonable to check both the cache
-                            # and the websocket connection for new responses
-                            response = await self._provider._ws_recv(timeout=0.5)
-                        except asyncio.TimeoutError:
-                            # if no response received, continue to next iteration
-                            continue
-
-                    if response.get("method") == "eth_subscription":
-                        break
-                    else:
-                        self._provider._request_processor.cache_raw_response(response)
-
-        yield await self._process_ws_response(response)
-
-    async def _process_ws_response(self, response: RPCResponse) -> RPCResponse:
+    async def _process_response(self, response: RPCResponse) -> RPCResponse:
         provider = cast(PersistentConnectionProvider, self._provider)
         request_info = self._request_processor.get_request_information_for_response(
             response
@@ -443,15 +568,18 @@ class RequestManager:
             return apply_result_formatters(result_formatters, partly_formatted_response)
 
 
-class _AsyncPersistentRecvStream:
+class _AsyncPersistentMessageStream:
     """
-    Async generator for receiving responses from a persistent connection. This
-    abstraction is necessary to define the `__aiter__()` method required for
-    use with "async for" loops.
+    Async generator for pulling subscription responses from the request processor
+    subscription queue. This abstraction is necessary to define the `__aiter__()`
+    method required for use with "async for" loops.
     """
 
     def __init__(self, manager: RequestManager, *args: Any, **kwargs: Any) -> None:
         self.manager = manager
+        self.provider: PersistentConnectionProvider = cast(
+            PersistentConnectionProvider, manager._provider
+        )
         super().__init__(*args, **kwargs)
 
     def __aiter__(self) -> Self:
@@ -459,6 +587,6 @@ class _AsyncPersistentRecvStream:
 
     async def __anext__(self) -> RPCResponse:
         try:
-            return await self.manager.ws_recv()
+            return await self.manager._get_next_message()
         except ConnectionClosedOK:
             raise StopAsyncIteration

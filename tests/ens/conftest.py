@@ -28,6 +28,9 @@ from ens.contract_data import (
     reverse_resolver_bytecode,
     reverse_resolver_bytecode_runtime,
 )
+from ens.exceptions import (
+    ENSTypeError,
+)
 from web3 import (
     AsyncWeb3,
     Web3,
@@ -61,7 +64,7 @@ def bytes32(val):
     if isinstance(val, int):
         result = Web3.to_bytes(val)
     else:
-        raise TypeError(f"{val!r} could not be converted to bytes")
+        raise ENSTypeError(f"{val!r} could not be converted to bytes")
     if len(result) < 32:
         return result.rjust(32, b"\0")
     else:
@@ -362,8 +365,7 @@ def TEST_ADDRESS(address_conversion_func):
 
 @pytest_asyncio.fixture(scope="session")
 def async_w3():
-    provider = AsyncEthereumTesterProvider()
-    _async_w3 = AsyncWeb3(provider, middlewares=provider.middlewares)
+    _async_w3 = AsyncWeb3(AsyncEthereumTesterProvider())
     return _async_w3
 
 

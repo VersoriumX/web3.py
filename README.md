@@ -1,14 +1,16 @@
 # web3.py
 
-[![Documentation Status](https://readthedocs.org/projects/web3py/badge/?version=latest)](https://web3py.readthedocs.io/en/latest/?badge=latest)
-[![Discord](https://img.shields.io/discord/809793915578089484?color=blue&label=chat&logo=discord&logoColor=white)](https://discord.gg/GHryRvPB84)
+[![Join the conversation on Discord](https://img.shields.io/discord/809793915578089484?color=blue&label=chat&logo=discord&logoColor=white)](https://discord.gg/GHryRvPB84)
 [![Build Status](https://circleci.com/gh/ethereum/web3.py.svg?style=shield)](https://circleci.com/gh/ethereum/web3.py)
+[![PyPI version](https://badge.fury.io/py/web3.svg)](https://badge.fury.io/py/web3)
+[![Python versions](https://img.shields.io/pypi/pyversions/web3.svg)](https://pypi.python.org/pypi/web3)
+[![Docs build](https://readthedocs.org/projects/web3py/badge/?version=latest)](https://web3py.readthedocs.io/en/latest/?badge=latest)
 
 A Python library for interacting with Ethereum.
 
--   Python 3.7.2+ support
+- Python 3.8+ support
 
----
+______________________________________________________________________
 
 ## Quickstart
 
@@ -26,6 +28,6 @@ guidelines for [contributing](https://web3py.readthedocs.io/en/latest/contributi
 then check out issues that are labeled
 [Good First Issue](https://github.com/ethereum/web3.py/issues?q=is%3Aissue+is%3Aopen+label%3A%22Good+First+Issue%22).
 
----
+______________________________________________________________________
 
 #### Questions on implementation or usage? Join the conversation on [discord](https://discord.gg/GHryRvPB84).

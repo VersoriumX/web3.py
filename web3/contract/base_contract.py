@@ -4,7 +4,6 @@ from typing import (
     Callable,
     Collection,
     Dict,
-    Generator,
     Iterable,
     List,
     NoReturn,
@@ -17,6 +16,9 @@ from typing import (
 )
 import warnings
 
+from eth_abi.exceptions import (
+    InsufficientDataBytes,
+)
 from eth_typing import (
     Address,
     ChecksumAddress,
@@ -93,7 +95,10 @@ from web3.exceptions import (
     NoABIEventsFound,
     NoABIFound,
     NoABIFunctionsFound,
+    Web3AttributeError,
+    Web3TypeError,
     Web3ValidationError,
+    Web3ValueError,
 )
 from web3.logs import (
     DISCARD,
@@ -126,7 +131,8 @@ if TYPE_CHECKING:
 
 
 class BaseContractEvent:
-    """Base class for contract events
+    """
+    Base class for contract events
 
     An event accessed via the api `contract.events.myEvents(*args, **kwargs)`
     is a subclass of this class.
@@ -164,14 +170,20 @@ class BaseContractEvent:
         try:
             errors.name
         except AttributeError:
-            raise AttributeError(
+            raise Web3AttributeError(
                 f"Error flag must be one of: {EventLogErrorFlags.flag_options()}"
             )
 
         for log in txn_receipt["logs"]:
             try:
                 rich_log = get_event_data(self.w3.codec, self.abi, log)
-            except (MismatchedABI, LogTopicError, InvalidEventABI, TypeError) as e:
+            except (
+                MismatchedABI,
+                LogTopicError,
+                InvalidEventABI,
+                TypeError,
+                InsufficientDataBytes,
+            ) as e:
                 if errors == DISCARD:
                     continue
                 elif errors == IGNORE:
@@ -186,7 +198,8 @@ class BaseContractEvent:
                         f"The log with transaction hash: {log['transactionHash']!r} "
                         f"and logIndex: {log['logIndex']} encountered the following "
                         f"error during processing: {type(e).__name__}({e}). It has "
-                        "been discarded."
+                        "been discarded.",
+                        stacklevel=2,
                     )
                     continue
             yield rich_log
@@ -200,12 +213,12 @@ class BaseContractEvent:
         self,
         abi: ABIEvent,
         argument_filters: Optional[Dict[str, Any]] = None,
-        fromBlock: Optional[BlockIdentifier] = None,
-        toBlock: Optional[BlockIdentifier] = None,
-        blockHash: Optional[HexBytes] = None,
+        from_block: Optional[BlockIdentifier] = None,
+        to_block: Optional[BlockIdentifier] = None,
+        block_hash: Optional[HexBytes] = None,
     ) -> FilterParams:
         if not self.address:
-            raise TypeError(
+            raise Web3TypeError(
                 "This method can be only called on "
                 "an instated contract with an address"
             )
@@ -215,11 +228,12 @@ class BaseContractEvent:
 
         _filters = dict(**argument_filters)
 
-        blkhash_set = blockHash is not None
-        blknum_set = fromBlock is not None or toBlock is not None
+        blkhash_set = block_hash is not None
+        blknum_set = from_block is not None or to_block is not None
         if blkhash_set and blknum_set:
             raise Web3ValidationError(
-                "blockHash cannot be set at the same time as fromBlock or toBlock"
+                "`block_hash` cannot be set at the same time as "
+                "`from_block` or `to_block`"
             )
 
         # Construct JSON-RPC raw filter presentation based on human readable
@@ -229,13 +243,13 @@ class BaseContractEvent:
             self.w3.codec,
             contract_address=self.address,
             argument_filters=_filters,
-            fromBlock=fromBlock,
-            toBlock=toBlock,
+            from_block=from_block,
+            to_block=to_block,
             address=self.address,
         )
 
-        if blockHash is not None:
-            event_filter_params["blockHash"] = blockHash
+        if block_hash is not None:
+            event_filter_params["blockHash"] = block_hash
 
         return event_filter_params
 
@@ -252,12 +266,12 @@ class BaseContractEvent:
         for filter_name, filter_value in _filters.items():
             _input = name_indexed_inputs[filter_name]
             if is_array_type(_input["type"]):
-                raise TypeError(
+                raise Web3TypeError(
                     "createFilter no longer supports array type filter arguments. "
                     "see the build_filter method for filtering array type filters."
                 )
             if is_list_like(filter_value) and is_dynamic_sized_type(_input["type"]):
-                raise TypeError(
+                raise Web3TypeError(
                     "createFilter no longer supports setting filter argument options "
                     "for dynamic sized types. See the build_filter method for setting "
                     "filters with the match_any method."
@@ -315,15 +329,15 @@ class BaseContractEvent:
     def _set_up_filter_builder(
         self,
         argument_filters: Optional[Dict[str, Any]] = None,
-        fromBlock: Optional[BlockIdentifier] = None,
-        toBlock: BlockIdentifier = "latest",
+        from_block: Optional[BlockIdentifier] = None,
+        to_block: BlockIdentifier = "latest",
         address: Optional[ChecksumAddress] = None,
         topics: Optional[Sequence[Any]] = None,
         filter_builder: Union[EventFilterBuilder, AsyncEventFilterBuilder] = None,
     ) -> None:
-        if fromBlock is None:
-            raise TypeError(
-                "Missing mandatory keyword argument to create_filter: fromBlock"
+        if from_block is None:
+            raise Web3TypeError(
+                "Missing mandatory keyword argument to create_filter: `from_block`"
             )
 
         if argument_filters is None:
@@ -340,8 +354,8 @@ class BaseContractEvent:
             self.w3.codec,
             contract_address=self.address,
             argument_filters=_filters,
-            fromBlock=fromBlock,
-            toBlock=toBlock,
+            from_block=from_block,
+            to_block=to_block,
             address=address,
             topics=topics,
         )
@@ -349,8 +363,8 @@ class BaseContractEvent:
         filter_builder.address = cast(
             ChecksumAddress, event_filter_params.get("address")
         )
-        filter_builder.fromBlock = event_filter_params.get("fromBlock")
-        filter_builder.toBlock = event_filter_params.get("toBlock")
+        filter_builder.from_block = event_filter_params.get("fromBlock")
+        filter_builder.to_block = event_filter_params.get("toBlock")
         match_any_vals = {
             arg: value
             for arg, value in _filters.items()
@@ -371,7 +385,8 @@ class BaseContractEvent:
 
 
 class BaseContractEvents:
-    """Class containing contract event objects
+    """
+    Class containing contract event objects
 
     This is available via:
 
@@ -432,7 +447,8 @@ class BaseContractEvents:
         return getattr(self, event_name)
 
     def __iter__(self) -> Iterable[Type["BaseContractEvent"]]:
-        """Iterate over supported
+        """
+        Iterate over supported
 
         :return: Iterable of :class:`ContractEvent`
         """
@@ -447,7 +463,8 @@ class BaseContractEvents:
 
 
 class BaseContractFunction:
-    """Base class for contract functions
+    """
+    Base class for contract functions
 
     A function accessed via the api `contract.functions.myMethod(*args, **kwargs)`
     is a subclass of this class.
@@ -480,12 +497,9 @@ class BaseContractFunction:
         if self.function_identifier in [FallbackFn, ReceiveFn]:
             self.selector = encode_hex(b"")
         elif is_text(self.function_identifier):
-            # https://github.com/python/mypy/issues/4976
-            self.selector = encode_hex(
-                function_abi_to_4byte_selector(self.abi)  # type: ignore
-            )
+            self.selector = encode_hex(function_abi_to_4byte_selector(self.abi))
         else:
-            raise TypeError("Unsupported function identifier")
+            raise Web3TypeError("Unsupported function identifier")
 
         self.arguments = merge_args_and_kwargs(self.abi, self.args, self.kwargs)
 
@@ -496,26 +510,25 @@ class BaseContractFunction:
             call_transaction = cast(TxParams, dict(**transaction))
 
         if "data" in call_transaction:
-            raise ValueError("Cannot set 'data' field in call transaction")
+            raise Web3ValueError("Cannot set 'data' field in call transaction")
 
         if self.address:
             call_transaction.setdefault("to", self.address)
         if self.w3.eth.default_account is not empty:
-            # type ignored b/c check prevents an empty default_account
             call_transaction.setdefault(
                 "from",
-                self.w3.eth.default_account,  # type: ignore
+                self.w3.eth.default_account,
             )
 
         if "to" not in call_transaction:
             if isinstance(self, type):
-                raise ValueError(
+                raise Web3ValueError(
                     "When using `Contract.[methodtype].[method].call()` from"
                     " a contract factory you "
                     "must provide a `to` address with the transaction"
                 )
             else:
-                raise ValueError(
+                raise Web3ValueError(
                     "Please ensure that this contract instance has an address."
                 )
 
@@ -528,24 +541,21 @@ class BaseContractFunction:
             transact_transaction = cast(TxParams, dict(**transaction))
 
         if "data" in transact_transaction:
-            raise ValueError("Cannot set 'data' field in transact transaction")
+            raise Web3ValueError("Cannot set 'data' field in transact transaction")
 
         if self.address is not None:
             transact_transaction.setdefault("to", self.address)
         if self.w3.eth.default_account is not empty:
-            # type ignored b/c check prevents an empty default_account
-            transact_transaction.setdefault(
-                "from", self.w3.eth.default_account  # type: ignore
-            )
+            transact_transaction.setdefault("from", self.w3.eth.default_account)
 
         if "to" not in transact_transaction:
             if isinstance(self, type):
-                raise ValueError(
+                raise Web3ValueError(
                     "When using `Contract.transact` from a contract factory you "
                     "must provide a `to` address with the transaction"
                 )
             else:
-                raise ValueError(
+                raise Web3ValueError(
                     "Please ensure that this contract instance has an address."
                 )
         return transact_transaction
@@ -557,26 +567,23 @@ class BaseContractFunction:
             estimate_gas_transaction = cast(TxParams, dict(**transaction))
 
         if "data" in estimate_gas_transaction:
-            raise ValueError("Cannot set 'data' field in estimate_gas transaction")
+            raise Web3ValueError("Cannot set 'data' field in estimate_gas transaction")
         if "to" in estimate_gas_transaction:
-            raise ValueError("Cannot set to in estimate_gas transaction")
+            raise Web3ValueError("Cannot set to in estimate_gas transaction")
 
         if self.address:
             estimate_gas_transaction.setdefault("to", self.address)
         if self.w3.eth.default_account is not empty:
-            # type ignored b/c check prevents an empty default_account
-            estimate_gas_transaction.setdefault(
-                "from", self.w3.eth.default_account  # type: ignore
-            )
+            estimate_gas_transaction.setdefault("from", self.w3.eth.default_account)
 
         if "to" not in estimate_gas_transaction:
             if isinstance(self, type):
-                raise ValueError(
+                raise Web3ValueError(
                     "When using `Contract.estimate_gas` from a contract factory "
                     "you must provide a `to` address with the transaction"
                 )
             else:
-                raise ValueError(
+                raise Web3ValueError(
                     "Please ensure that this contract instance has an address."
                 )
         return estimate_gas_transaction
@@ -588,21 +595,23 @@ class BaseContractFunction:
             built_transaction = cast(TxParams, dict(**transaction))
 
         if "data" in built_transaction:
-            raise ValueError("Cannot set 'data' field in build transaction")
+            raise Web3ValueError("Cannot set 'data' field in build transaction")
 
         if not self.address and "to" not in built_transaction:
-            raise ValueError(
+            raise Web3ValueError(
                 "When using `ContractFunction.build_transaction` from a contract "
                 "factory you must provide a `to` address with the transaction"
             )
         if self.address and "to" in built_transaction:
-            raise ValueError("Cannot set 'to' field in contract call build transaction")
+            raise Web3ValueError(
+                "Cannot set 'to' field in contract call build transaction"
+            )
 
         if self.address:
             built_transaction.setdefault("to", self.address)
 
         if "to" not in built_transaction:
-            raise ValueError(
+            raise Web3ValueError(
                 "Please ensure that this contract instance has an address."
             )
 
@@ -662,12 +671,12 @@ class BaseContractFunctions:
                     ),
                 )
 
-    def __iter__(self) -> Generator[str, None, None]:
+    def __iter__(self) -> Iterable["ABIFunction"]:
         if not hasattr(self, "_functions") or not self._functions:
             return
 
         for func in self._functions:
-            yield func["name"]
+            yield self[func["name"]]
 
     def __getitem__(self, function_name: str) -> ABIFunction:
         return getattr(self, function_name)
@@ -680,7 +689,8 @@ class BaseContractFunctions:
 
 
 class BaseContract:
-    """Base class for Contract proxy classes.
+    """
+    Base class for Contract proxy classes.
 
     First you need to create your Contract classes using
     :meth:`web3.eth.Eth.contract` that takes compiled Solidity contract
@@ -724,7 +734,7 @@ class BaseContract:
     #  Public API
     #
     @combomethod
-    def encodeABI(
+    def encode_abi(
         cls,
         fn_name: str,
         args: Optional[Any] = None,
@@ -761,7 +771,7 @@ class BaseContract:
     @combomethod
     def get_function_by_signature(self, signature: str) -> "BaseContractFunction":
         if " " in signature:
-            raise ValueError(
+            raise Web3ValueError(
                 "Function signature should not contain any spaces. "
                 f"Found spaces in input: {signature}"
             )
@@ -793,9 +803,9 @@ class BaseContract:
         self, selector: Union[bytes, int, HexStr]
     ) -> "BaseContractFunction":
         def callable_check(fn_abi: ABIFunction) -> bool:
-            # typed dict cannot be used w/ a normal Dict
-            # https://github.com/python/mypy/issues/4976
-            return encode_hex(function_abi_to_4byte_selector(fn_abi)) == to_4byte_hex(selector)  # type: ignore # noqa: E501
+            return encode_hex(function_abi_to_4byte_selector(fn_abi)) == to_4byte_hex(
+                selector
+            )
 
         fns = self.find_functions_by_identifier(
             self.abi, self.w3, self.address, callable_check
@@ -806,8 +816,7 @@ class BaseContract:
     def decode_function_input(
         self, data: HexStr
     ) -> Tuple["BaseContractFunction", Dict[str, Any]]:
-        # type ignored b/c expects data arg to be HexBytes
-        data = HexBytes(data)  # type: ignore
+        data = HexBytes(data)
         func = self.get_function_by_selector(data[:4])
         arguments = decode_transaction_data(
             func.abi, data, normalizers=BASE_RETURN_NORMALIZERS
@@ -894,7 +903,7 @@ class BaseContract:
         else:
             if args is not None or kwargs is not None:
                 msg = "Constructor args were provided, but no constructor function was provided."  # noqa: E501
-                raise TypeError(msg)
+                raise Web3TypeError(msg)
 
             deploy_data = to_hex(cls.bytecode)
 
@@ -1089,10 +1098,7 @@ class BaseContractConstructor:
             )
 
         if self.w3.eth.default_account is not empty:
-            # type ignored b/c check prevents an empty default_account
-            estimate_gas_transaction.setdefault(
-                "from", self.w3.eth.default_account  # type: ignore
-            )
+            estimate_gas_transaction.setdefault("from", self.w3.eth.default_account)
 
         estimate_gas_transaction["data"] = self.data_in_transaction
 
@@ -1108,10 +1114,7 @@ class BaseContractConstructor:
             )
 
         if self.w3.eth.default_account is not empty:
-            # type ignored b/c check prevents an empty default_account
-            transact_transaction.setdefault(
-                "from", self.w3.eth.default_account  # type: ignore
-            )
+            transact_transaction.setdefault("from", self.w3.eth.default_account)
 
         transact_transaction["data"] = self.data_in_transaction
 
@@ -1129,7 +1132,7 @@ class BaseContractConstructor:
     ) -> None:
         keys_found = transaction.keys() & forbidden_keys
         if keys_found:
-            raise ValueError(
+            raise Web3ValueError(
                 f"Cannot set '{', '.join(keys_found)}' field(s) in transaction"
             )
 

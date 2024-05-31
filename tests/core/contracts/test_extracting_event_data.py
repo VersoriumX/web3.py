@@ -1,6 +1,10 @@
+import copy
 import pytest
 import re
 
+from eth_abi.exceptions import (
+    InsufficientDataBytes,
+)
 from eth_utils import (
     is_same_address,
 )
@@ -13,6 +17,7 @@ from web3._utils.events import (
 )
 from web3.exceptions import (
     LogTopicError,
+    Web3AttributeError,
     Web3ValidationError,
 )
 from web3.logs import (
@@ -141,6 +146,158 @@ def test_event_data_extraction(
     assert event_data["transactionIndex"] == txn_receipt["transactionIndex"]
     assert is_same_address(event_data["address"], emitter.address)
     assert event_data["event"] == event_name
+
+
+@pytest.mark.parametrize(
+    "log_entry,expected",
+    (
+        # Example from contract event:
+        # https://arbiscan.io/tx/0x51d5c2d87cdf8b7dc560c807521869f47ca8d7a1ad879c0237747ec45f5d1bfb#eventlog
+        # Ensures the inputs are ordered correctly when indexed arguments are ordered
+        # arbitrarily
+        (
+            {
+                "name": "DepositForBurn",
+                "topics": (
+                    "0x2fa9ca894982930190727e75500a97d8dc500233a5065e0f3126c48fbe0343c0",  # noqa: E501
+                    "0x0000000000000000000000000000000000000000000000000000000000014f45",  # noqa: E501
+                    "0x" + "af88d065e77c8cC2239327C5EDb3A432268e5831".zfill(64),
+                    "0x" + "02Ae4716B9D5d48Db1445814b0eDE39f5c28264B".zfill(64),
+                ),
+                "data": "0x00000000000000000000000000000000000000000000000000000002962f766700000000000000000000000065f2145693be3e75b8cfb2e318a3a74d057e6c7b0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000bd3fa81b58ba92a82136038b25adec7066af31550000000000000000000000000000000000000000000000000000000000000000",  # noqa: E501
+                "logIndex": 41,
+                "transactionIndex": "0x1",
+                "transactionHash": "0x51d5c2d87cdf8b7dc560c807521869f47ca8d7a1ad879c0237747ec45f5d1bfb",  # noqa: E501
+                "address": "0x19330d10d9cc8751218eaf51e8885d058642e08a",
+                "blockHash": "0x3cc51a448ac07ab76a6ce4c04bdfe383062dd1e9a0a415a259fbd9997f08804d",  # noqa: E501
+                "blockNumber": "184506606",
+            },
+            {
+                "args": {
+                    "nonce": 85829,
+                    "burnToken": "0xaf88d065e77c8cC2239327C5EDb3A432268e5831",
+                    "depositor": "0x02Ae4716B9D5d48Db1445814b0eDE39f5c28264B",
+                    "amount": 11109627495,
+                    "mintRecipient": b"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00e\xf2\x14V\x93\xbe>u\xb8\xcf\xb2\xe3\x18\xa3\xa7M\x05~l{",  # noqa: E501
+                    "destinationDomain": 0,
+                    "destinationTokenMessenger": b"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xbd?\xa8\x1bX\xba\x92\xa8!6\x03\x8b%\xad\xecpf\xaf1U",  # noqa: E501
+                    "destinationCaller": b"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",  # noqa: E501
+                },
+                "event": "DepositForBurn",
+                "logIndex": 41,
+                "transactionIndex": "0x1",
+                "transactionHash": "0x51d5c2d87cdf8b7dc560c807521869f47ca8d7a1ad879c0237747ec45f5d1bfb",  # noqa: E501
+                "address": "0x19330d10d9cc8751218eaf51e8885d058642e08a",
+                "blockHash": "0x3cc51a448ac07ab76a6ce4c04bdfe383062dd1e9a0a415a259fbd9997f08804d",  # noqa: E501
+                "blockNumber": "184506606",
+            },
+        ),
+        # Example from contract event:
+        # https://arbiscan.io/tx/0xb3e60df2a9af1e1c0e8d8a1a615772c5b2a416b93055cf5b1d5bc1dcaaa66c4d#eventlog
+        # Ensures the data and topics are correctly typed before processing
+        (
+            {
+                "address": "0x19330d10d9cc8751218eaf51e8885d058642e08a",
+                "topics": [
+                    "0x2fa9ca894982930190727e75500a97d8dc500233a5065e0f3126c48fbe0343c0",  # noqa: E501
+                    "0x0000000000000000000000000000000000000000000000000000000000016b52",  # noqa: E501
+                    "0x000000000000000000000000af88d065e77c8cc2239327c5edb3a432268e5831",  # noqa: E501
+                    "0x00000000000000000000000002ae4716b9d5d48db1445814b0ede39f5c28264b",  # noqa: E501
+                ],
+                "data": "0x000000000000000000000000000000000000000000000000000000021424d4a600000000000000000000000065f2145693be3e75b8cfb2e318a3a74d057e6c7b0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000bd3fa81b58ba92a82136038b25adec7066af31550000000000000000000000000000000000000000000000000000000000000000",  # noqa: E501
+                "blockNumber": "0xb547cb0",
+                "transactionHash": "0xbe3178507c2054b3177e8e686def9127e1c34c61e9ac9575caa59e1730cde109",  # noqa: E501
+                "transactionIndex": "0x1",
+                "blockHash": "0x7c15f4af3cbc34c52a381e6f22585c89ed2e6880fa609b1943ec05648049ba6b",  # noqa: E501
+                "logIndex": "0xa",
+                "removed": False,
+            },
+            {
+                "args": {
+                    "nonce": 93010,
+                    "burnToken": "0xaf88d065e77c8cC2239327C5EDb3A432268e5831",
+                    "depositor": "0x02Ae4716B9D5d48Db1445814b0eDE39f5c28264B",
+                    "amount": 8927892646,
+                    "mintRecipient": b"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00e\xf2\x14V\x93\xbe>u\xb8\xcf\xb2\xe3\x18\xa3\xa7M\x05~l{",  # noqa: E501
+                    "destinationDomain": 0,
+                    "destinationTokenMessenger": b"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xbd?\xa8\x1bX\xba\x92\xa8!6\x03\x8b%\xad\xecpf\xaf1U",  # noqa: E501
+                    "destinationCaller": b"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",  # noqa: E501
+                },
+                "event": "DepositForBurn",
+                "logIndex": 10,
+                "transactionIndex": "0x1",
+                "transactionHash": "0xbe3178507c2054b3177e8e686def9127e1c34c61e9ac9575caa59e1730cde109",  # noqa: E501
+                "address": "0x19330d10d9cc8751218eaf51e8885d058642e08a",
+                "blockHash": "0x7c15f4af3cbc34c52a381e6f22585c89ed2e6880fa609b1943ec05648049ba6b",  # noqa: E501
+                "blockNumber": "0xb547cb0",
+            },
+        ),
+    ),
+)
+def test_event_data_with_hexstr_inputs(w3, log_entry, expected):
+    event_abi = {
+        "anonymous": False,
+        "inputs": [
+            {
+                "indexed": True,
+                "internalType": "uint64",
+                "name": "nonce",
+                "type": "uint64",
+            },
+            {
+                "indexed": True,
+                "internalType": "address",
+                "name": "burnToken",
+                "type": "address",
+            },
+            {
+                "indexed": False,
+                "internalType": "uint256",
+                "name": "amount",
+                "type": "uint256",
+            },
+            {
+                "indexed": True,
+                "internalType": "address",
+                "name": "depositor",
+                "type": "address",
+            },
+            {
+                "indexed": False,
+                "internalType": "bytes32",
+                "name": "mintRecipient",
+                "type": "bytes32",
+            },
+            {
+                "indexed": False,
+                "internalType": "uint32",
+                "name": "destinationDomain",
+                "type": "uint32",
+            },
+            {
+                "indexed": False,
+                "internalType": "bytes32",
+                "name": "destinationTokenMessenger",
+                "type": "bytes32",
+            },
+            {
+                "indexed": False,
+                "internalType": "bytes32",
+                "name": "destinationCaller",
+                "type": "bytes32",
+            },
+        ],
+        "name": "DepositForBurn",
+        "type": "event",
+    }
+    event_data = get_event_data(w3.codec, event_abi, log_entry)
+
+    assert event_data["args"] == expected["args"]
+    assert event_data["blockHash"] == expected["blockHash"]
+    assert event_data["blockNumber"] == expected["blockNumber"]
+    assert event_data["transactionIndex"] == expected["transactionIndex"]
+    assert is_same_address(event_data["address"], expected["address"])
+    assert event_data["event"] == expected["event"]
 
 
 @pytest.mark.parametrize(
@@ -329,6 +486,78 @@ def test_argument_extraction_strict_bytes_types(
     assert event_data["transactionIndex"] == txn_receipt["transactionIndex"]
     assert is_same_address(event_data["address"], emitter.address)
     assert event_data["event"] == "LogListArgs"
+
+
+def test_contract_event_get_logs_sorted_by_log_index(w3, emitter, request_mocker):
+    get_logs_response = [
+        {
+            "type": "mined",
+            "logIndex": 10,
+            "transactionIndex": 0,
+            "transactionHash": "0xaef7f312d863780b861d8c38984b2a33f77e9508810735e2b042143f7f189f83",  # noqa: E501
+            "blockHash": "0x2200ec3324fdaca4ee2f4629489d2d06fb28108dae61b63b84ef39702e2b64e7",  # noqa: E501
+            "blockNumber": 3,
+            "address": "0xF2E246BB76DF876Cef8b38ae84130F4F55De395b",
+            "data": "0x",
+            "topics": [
+                "0x1e86022f78f8d04f8e3dfd13a2bdb280403e6632877c0dbee5e4eeb259908a5c"
+            ],
+        },
+        {
+            "type": "mined",
+            "logIndex": 0,
+            "transactionIndex": 0,
+            "transactionHash": "0x61e57bb1b5af14ca1b0964a84fb640bf39927961f26311a6450475a749e00cbb",  # noqa: E501
+            "blockHash": "0x73dd9a3b0f581689ebd67adea0debe05672a334c723379dc506fb71a666c1754",  # noqa: E501
+            "blockNumber": 4,
+            "address": "0xF2E246BB76DF876Cef8b38ae84130F4F55De395b",
+            "data": "0x",
+            "topics": [
+                "0x1e86022f78f8d04f8e3dfd13a2bdb280403e6632877c0dbee5e4eeb259908a5c"
+            ],
+        },
+        {
+            "type": "mined",
+            "logIndex": 123,
+            "transactionIndex": 0,
+            "transactionHash": "0x61e57bb1b5af14ca1b0964a84fb640bf39927961f26311a6450475a749e00cbb",  # noqa: E501
+            "blockHash": "0x73dd9a3b0f581689ebd67adea0debe05672a334c723379dc506fb71a666c1754",  # noqa: E501
+            "blockNumber": 1,
+            "address": "0xF2E246BB76DF876Cef8b38ae84130F4F55De395b",
+            "data": "0x",
+            "topics": [
+                "0x1e86022f78f8d04f8e3dfd13a2bdb280403e6632877c0dbee5e4eeb259908a5c"
+            ],
+        },
+        {
+            "type": "mined",
+            "logIndex": 54,
+            "transactionIndex": 0,
+            "transactionHash": "0x61e57bb1b5af14ca1b0964a84fb640bf39927961f26311a6450475a749e00cbb",  # noqa: E501
+            "blockHash": "0x73dd9a3b0f581689ebd67adea0debe05672a334c723379dc506fb71a666c1754",  # noqa: E501
+            "blockNumber": 1,
+            "address": "0xF2E246BB76DF876Cef8b38ae84130F4F55De395b",
+            "data": "0x",
+            "topics": [
+                "0x1e86022f78f8d04f8e3dfd13a2bdb280403e6632877c0dbee5e4eeb259908a5c"
+            ],
+        },
+    ]
+
+    with request_mocker(w3, mock_results={"eth_getLogs": get_logs_response}):
+        logs = emitter.events.LogNoArguments().get_logs()
+
+        sorted_logs = sorted(
+            emitter.events.LogNoArguments().get_logs(),
+            key=lambda log: log["logIndex"],
+        )
+        sorted_logs = sorted(
+            emitter.events.LogNoArguments().get_logs(),
+            key=lambda log: log["blockNumber"],
+        )
+
+    assert len(logs) == 4
+    assert logs == sorted_logs
 
 
 @pytest.mark.parametrize(
@@ -943,7 +1172,7 @@ def test_receipt_processing_with_strict_flag(indexed_event_contract, dup_txn_rec
 def test_receipt_processing_with_invalid_flag(indexed_event_contract, dup_txn_receipt):
     event_instance = indexed_event_contract.events.LogSingleWithIndex()
 
-    with pytest.raises(AttributeError, match="Error flag must be one of: "):
+    with pytest.raises(Web3AttributeError, match="Error flag must be one of: "):
         event_instance.process_receipt(dup_txn_receipt, errors="not-a-flag")
 
 
@@ -963,7 +1192,7 @@ def test_single_log_processing_with_errors(indexed_event_contract, dup_txn_recei
 
 
 def test_get_all_entries_with_nested_tuple_event(w3, emitter):
-    struct_args_filter = emitter.events.LogStructArgs.create_filter(fromBlock=0)
+    struct_args_filter = emitter.events.LogStructArgs.create_filter(from_block=0)
 
     tx_hash = emitter.functions.logStruct(1, (2, 3, (4,))).transact()
     w3.eth.wait_for_transaction_receipt(tx_hash)
@@ -988,7 +1217,7 @@ def test_get_all_entries_with_nested_tuple_event_non_strict(
     w3_non_strict_abi, non_strict_emitter
 ):
     struct_args_filter = non_strict_emitter.events.LogStructArgs.create_filter(
-        fromBlock=0
+        from_block=0
     )
 
     tx_hash = non_strict_emitter.functions.logStruct(1, (2, 3, (4,))).transact()
@@ -1008,3 +1237,29 @@ def test_get_all_entries_with_nested_tuple_event_non_strict(
     assert log_entry.blockNumber == txn_receipt["blockNumber"]
     assert log_entry.transactionIndex == txn_receipt["transactionIndex"]
     assert is_same_address(log_entry.address, non_strict_emitter.address)
+
+
+def test_receipt_processing_catches_insufficientdatabytes_error_by_default(
+    w3, emitter, wait_for_transaction
+):
+    txn_hash = emitter.functions.logListArgs([b"13"], [b"54"]).transact()
+    txn_receipt = wait_for_transaction(w3, txn_hash)
+    event_instance = emitter.events.LogListArgs()
+
+    # web3 doesn't generate logs with non-standard lengths, so we have to do it manually
+    txn_receipt_dict = copy.deepcopy(txn_receipt)
+    txn_receipt_dict["logs"][0] = dict(txn_receipt_dict["logs"][0])
+    txn_receipt_dict["logs"][0]["data"] = txn_receipt_dict["logs"][0]["data"][:-8]
+
+    # WARN is default
+    assert len(event_instance.process_receipt(txn_receipt_dict)) == 0
+    assert len(event_instance.process_receipt(txn_receipt_dict, errors=WARN)) == 0
+    assert len(event_instance.process_receipt(txn_receipt_dict, errors=DISCARD)) == 0
+
+    # IGNORE includes the InsufficientDataBytes error in the log
+    assert len(event_instance.process_receipt(txn_receipt_dict, errors=IGNORE)) == 1
+
+    # STRICT raises an error to be caught
+    with pytest.raises(InsufficientDataBytes):
+        returned_log = event_instance.process_receipt(txn_receipt_dict, errors=STRICT)
+        assert len(returned_log) == 0

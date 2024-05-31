@@ -24,6 +24,9 @@ from eth_utils.toolz import (
 from web3._utils.abi import (
     map_abi_data,
 )
+from web3.exceptions import (
+    Web3TypeError,
+)
 from web3.types import (
     RPCEndpoint,
 )
@@ -57,6 +60,7 @@ class RPC:
     eth_getBalance = RPCEndpoint("eth_getBalance")
     eth_getBlockByHash = RPCEndpoint("eth_getBlockByHash")
     eth_getBlockByNumber = RPCEndpoint("eth_getBlockByNumber")
+    eth_getBlockReceipts = RPCEndpoint("eth_getBlockReceipts")
     eth_getBlockTransactionCountByHash = RPCEndpoint(
         "eth_getBlockTransactionCountByHash"
     )
@@ -114,32 +118,10 @@ class RPC:
     evm_revert = RPCEndpoint("evm_revert")
     evm_snapshot = RPCEndpoint("evm_snapshot")
 
-    # miner
-    miner_makeDag = RPCEndpoint("miner_makeDag")
-    miner_setExtra = RPCEndpoint("miner_setExtra")
-    miner_setEtherbase = RPCEndpoint("miner_setEtherbase")
-    miner_setGasPrice = RPCEndpoint("miner_setGasPrice")
-    miner_start = RPCEndpoint("miner_start")
-    miner_stop = RPCEndpoint("miner_stop")
-    miner_startAutoDag = RPCEndpoint("miner_startAutoDag")
-    miner_stopAutoDag = RPCEndpoint("miner_stopAutoDag")
-
     # net
     net_listening = RPCEndpoint("net_listening")
     net_peerCount = RPCEndpoint("net_peerCount")
     net_version = RPCEndpoint("net_version")
-
-    # personal
-    personal_ecRecover = RPCEndpoint("personal_ecRecover")
-    personal_importRawKey = RPCEndpoint("personal_importRawKey")
-    personal_listAccounts = RPCEndpoint("personal_listAccounts")
-    personal_listWallets = RPCEndpoint("personal_listWallets")
-    personal_lockAccount = RPCEndpoint("personal_lockAccount")
-    personal_newAccount = RPCEndpoint("personal_newAccount")
-    personal_sendTransaction = RPCEndpoint("personal_sendTransaction")
-    personal_sign = RPCEndpoint("personal_sign")
-    personal_signTypedData = RPCEndpoint("personal_signTypedData")
-    personal_unlockAccount = RPCEndpoint("personal_unlockAccount")
 
     # testing
     testing_timeTravel = RPCEndpoint("testing_timeTravel")
@@ -167,6 +149,7 @@ TRANSACTION_PARAMS_ABIS = {
     "from": "address",
     "gas": "uint",
     "gasPrice": "uint",
+    "maxFeePerBlobGas": "uint",
     "maxFeePerGas": "uint",
     "maxPriorityFeePerGas": "uint",
     "nonce": "uint",
@@ -216,12 +199,6 @@ RPC_ABIS: Dict[str, Union[Sequence[Any], Dict[str, str]]] = {
     "eth_signTypedData": ["address", None],
     "eth_submitHashrate": ["uint", "bytes32"],
     "eth_submitWork": ["bytes8", "bytes32", "bytes32"],
-    # personal
-    "personal_sendTransaction": TRANSACTION_PARAMS_ABIS,
-    "personal_lockAccount": ["address"],
-    "personal_unlockAccount": ["address", None, None],
-    "personal_sign": [None, "address", None],
-    "personal_signTypedData": [None, "address", None],
     "trace_call": TRANSACTION_PARAMS_ABIS,
     "trace_filter": TRACE_FILTER_PARAM_ABIS,
 }
@@ -255,6 +232,6 @@ def abi_request_formatters(
             single_dict_formatter = apply_abi_formatters_to_dict(normalizers, abi_types)
             yield method, apply_formatter_at_index(single_dict_formatter, 0)
         else:
-            raise TypeError(
+            raise Web3TypeError(
                 f"ABI definitions must be a list or dictionary, got {abi_types!r}"
             )

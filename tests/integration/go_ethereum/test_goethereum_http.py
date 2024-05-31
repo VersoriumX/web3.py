@@ -2,9 +2,6 @@ import pytest
 
 import pytest_asyncio
 
-from tests.integration.common import (
-    COINBASE,
-)
 from tests.utils import (
     get_open_port,
 )
@@ -15,10 +12,7 @@ from web3 import (
 from web3._utils.module_testing.go_ethereum_admin_module import (
     GoEthereumAsyncAdminModuleTest,
 )
-from web3._utils.module_testing.go_ethereum_personal_module import (
-    GoEthereumAsyncPersonalModuleTest,
-)
-from web3.providers.async_rpc import (
+from web3.providers.rpc import (
     AsyncHTTPProvider,
 )
 
@@ -27,11 +21,11 @@ from .common import (
     GoEthereumAsyncEthModuleTest,
     GoEthereumAsyncNetModuleTest,
     GoEthereumAsyncTxPoolModuleTest,
+    GoEthereumAsyncWeb3ModuleTest,
     GoEthereumEthModuleTest,
     GoEthereumNetModuleTest,
-    GoEthereumPersonalModuleTest,
-    GoEthereumTest,
     GoEthereumTxPoolModuleTest,
+    GoEthereumWeb3ModuleTest,
 )
 from .utils import (
     wait_for_aiohttp,
@@ -57,11 +51,8 @@ def _geth_command_arguments(rpc_port, base_geth_command_arguments, geth_version)
             "--http.port",
             rpc_port,
             "--http.api",
-            "admin,eth,net,web3,personal,miner,txpool",
+            "admin,eth,net,web3,txpool",
             "--ipcdisable",
-            "--allow-insecure-unlock",
-            "--miner.etherbase",
-            COINBASE[2:],
         )
     else:
         raise AssertionError("Unsupported Geth version")
@@ -77,11 +68,10 @@ def geth_command_arguments(rpc_port, base_geth_command_arguments, get_geth_versi
 @pytest.fixture(scope="module")
 def w3(geth_process, endpoint_uri):
     wait_for_http(endpoint_uri)
-    _w3 = Web3(Web3.HTTPProvider(endpoint_uri))
-    return _w3
+    return Web3(Web3.HTTPProvider(endpoint_uri))
 
 
-class TestGoEthereumTest(GoEthereumTest):
+class TestGoEthereumWeb3ModuleTest(GoEthereumWeb3ModuleTest):
     pass
 
 
@@ -113,10 +103,6 @@ class TestGoEthereumNetModuleTest(GoEthereumNetModuleTest):
     pass
 
 
-class TestGoEthereumPersonalModuleTest(GoEthereumPersonalModuleTest):
-    pass
-
-
 class TestGoEthereumTxPoolModuleTest(GoEthereumTxPoolModuleTest):
     pass
 
@@ -129,6 +115,10 @@ async def async_w3(geth_process, endpoint_uri):
     await wait_for_aiohttp(endpoint_uri)
     _w3 = AsyncWeb3(AsyncHTTPProvider(endpoint_uri))
     return _w3
+
+
+class TestGoEthereumAsyncWeb3ModuleTest(GoEthereumAsyncWeb3ModuleTest):
+    pass
 
 
 class TestGoEthereumAsyncAdminModuleTest(GoEthereumAsyncAdminModuleTest):
@@ -155,10 +145,6 @@ class TestGoEthereumAsyncAdminModuleTest(GoEthereumAsyncAdminModuleTest):
 
 
 class TestGoEthereumAsyncNetModuleTest(GoEthereumAsyncNetModuleTest):
-    pass
-
-
-class TestGoEthereumAsyncPersonalModuleTest(GoEthereumAsyncPersonalModuleTest):
     pass
 
 

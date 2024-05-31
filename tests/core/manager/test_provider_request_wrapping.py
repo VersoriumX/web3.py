@@ -9,10 +9,12 @@ from web3.providers import (
 class DummyProvider(BaseProvider):
     def make_request(self, method, params):
         return {
+            "jsonrpc": "2.0",
+            "id": 1,
             "result": {
                 "method": method,
                 "params": params,
-                "middlewares": [],
+                "middleware": [],
             },
         }
 
@@ -23,9 +25,9 @@ def test_provider_property_setter_and_getter(middleware_factory):
 
     provider = DummyProvider()
 
-    manager = RequestManager(None, provider, middlewares=[middleware_a, middleware_b])
+    manager = RequestManager(None, provider, middleware=[middleware_a, middleware_b])
     response = manager.request_blocking("init", ["init"])
 
     assert response["method"] == "init|middleware-A|middleware-B"
     assert response["params"] == ["init", "middleware-A", "middleware-B"]
-    assert response["middlewares"] == ["middleware-B", "middleware-A"]
+    assert response["middleware"] == ["middleware-B", "middleware-A"]

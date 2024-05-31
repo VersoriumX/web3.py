@@ -20,7 +20,7 @@ from tests.utils import (
 @pytest.fixture(
     scope="function",
     params=[True, False],
-    ids=["local_filter_middleware", "node_based_filter"],
+    ids=["LocalFilterMiddleware", "node_based_filter"],
 )
 def w3(request):
     return _w3_fixture_logic(request)
@@ -51,8 +51,8 @@ def emitter(
 def return_filter(contract, args):
     event_name = args[0]
     kwargs = apply_key_map({"filter": "argument_filters"}, args[1])
-    if "fromBlock" not in kwargs:
-        kwargs["fromBlock"] = "latest"
+    if "from_block" not in kwargs:
+        kwargs["from_block"] = "latest"
     return contract.events[event_name].create_filter(**kwargs)
 
 
@@ -67,7 +67,7 @@ def create_filter(request):
 @pytest.fixture(
     scope="function",
     params=[True, False],
-    ids=["async_local_filter_middleware", "node_based_filter"],
+    ids=["LocalFilterMiddleware", "node_based_filter"],
 )
 def async_w3(request):
     return _async_w3_fixture_logic(request)
@@ -98,8 +98,8 @@ async def async_emitter(
 async def async_return_filter(contract, args):
     event_name = args[0]
     kwargs = apply_key_map({"filter": "argument_filters"}, args[1])
-    if "fromBlock" not in kwargs:
-        kwargs["fromBlock"] = "latest"
+    if "from_block" not in kwargs:
+        kwargs["from_block"] = "latest"
     return await contract.events[event_name].create_filter(**kwargs)
 
 

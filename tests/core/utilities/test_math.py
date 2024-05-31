@@ -10,6 +10,7 @@ from web3._utils.math import (
 )
 from web3.exceptions import (
     InsufficientData,
+    Web3ValueError,
 )
 
 values = range(100)
@@ -36,13 +37,21 @@ def test_percentiles_with_out_of_bounds_fractions():
     assert 1 < percentile([1, 2, 3, 4], percentile=30)
 
 
+@pytest.mark.parametrize(
+    "out_of_bounds_percentile", [-2, -1, -0.1, -0.0001, 100.0001, 100.1, 101, 102, 200]
+)
+def test_percentile_out_of_bounds_values(out_of_bounds_percentile):
+    with pytest.raises(Web3ValueError):
+        percentile(values, percentile=out_of_bounds_percentile)
+
+
 @given(
     values=st.lists(elements=st.integers(), min_size=1, max_size=200),
     p=st.integers(max_value=100, min_value=0),
 )
 def test_fuzz_test_percentiles(values, p):
     if not values:
-        with pytest.raises(ValueError):
+        with pytest.raises(Web3ValueError):
             percentile(values, p)
     else:
         percentile(values, p)

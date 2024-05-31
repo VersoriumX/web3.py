@@ -32,8 +32,6 @@ from eth_utils.curried import (
     is_integer,
     is_null,
     is_string,
-    remove_0x_prefix,
-    text_if_str,
     to_checksum_address,
     to_list,
     to_tuple,
@@ -52,12 +50,9 @@ from hexbytes import (
 from web3._utils.abi import (
     is_length,
 )
-from web3._utils.contract_error_handling import (
+from web3._utils.error_formatters_utils import (
     raise_contract_logic_error_on_revert,
-)
-from web3._utils.encoding import (
-    hexstr_if_str,
-    to_hex,
+    raise_transaction_indexing_error_if_indexing,
 )
 from web3._utils.filters import (
     AsyncBlockFilter,
@@ -98,12 +93,14 @@ from web3.datastructures import (
 from web3.exceptions import (
     BlockNotFound,
     TransactionNotFound,
+    Web3TypeError,
+    Web3ValueError,
 )
 from web3.types import (
     BlockIdentifier,
-    CallOverrideParams,
     Formatters,
     RPCEndpoint,
+    StateOverrideParams,
     TReturn,
     TxParams,
     _Hash32,
@@ -135,7 +132,7 @@ def to_hexbytes(
     if isinstance(val, (str, int, bytes)):
         result = HexBytes(val)
     else:
-        raise TypeError(f"Cannot convert {val!r} to HexBytes")
+        raise Web3TypeError(f"Cannot convert {val!r} to HexBytes")
 
     extra_bytes = len(result) - num_bytes
     if extra_bytes == 0 or (variable_length and extra_bytes < 0):
@@ -143,7 +140,7 @@ def to_hexbytes(
     elif all(byte == 0 for byte in result[:extra_bytes]):
         return HexBytes(result[extra_bytes:])
     else:
-        raise ValueError(
+        raise Web3ValueError(
             f"The value {result!r} is {len(result)} bytes, but should be {num_bytes}"
         )
 
@@ -176,9 +173,9 @@ def type_aware_apply_formatters_to_dict_keys_and_values(
     """
     Preserve ``AttributeDict`` types if original ``value`` was an ``AttributeDict``.
     """
-    formatted_dict = dict(
-        (key_formatters(k), value_formatters(v)) for k, v in dict_like_object.items()
-    )
+    formatted_dict = {
+        key_formatters(k): value_formatters(v) for k, v in dict_like_object.items()
+    }
     return (
         AttributeDict.recursive(formatted_dict)
         if is_attrdict(dict_like_object)
@@ -232,6 +229,10 @@ TRANSACTION_RESULT_FORMATTERS = {
     ),
     "input": HexBytes,
     "data": HexBytes,  # Nethermind, for example, returns both `input` and `data`
+    "maxFeePerBlobGas": to_integer_if_hex,
+    "blobVersionedHashes": apply_formatter_if(
+        is_not_null, apply_formatter_to_array(to_hexbytes(32))
+    ),
 }
 
 
@@ -280,6 +281,8 @@ RECEIPT_FORMATTERS = {
     "to": apply_formatter_if(is_address, to_checksum_address),
     "effectiveGasPrice": to_integer_if_hex,
     "type": to_integer_if_hex,
+    "blobGasPrice": to_integer_if_hex,
+    "blobGasUsed": to_integer_if_hex,
 }
 
 
@@ -321,6 +324,9 @@ BLOCK_FORMATTERS = {
         is_not_null, apply_list_to_array_formatter(withdrawal_result_formatter)
     ),
     "withdrawalsRoot": apply_formatter_if(is_not_null, to_hexbytes(32)),
+    "blobGasUsed": to_integer_if_hex,
+    "excessBlobGas": to_integer_if_hex,
+    "parentBeaconBlockRoot": apply_formatter_if(is_not_null, to_hexbytes(32)),
 }
 
 
@@ -415,7 +421,22 @@ filter_result_formatter = apply_one_of_formatters(
     )
 )
 
+ACCESS_LIST_REQUEST_FORMATTER = type_aware_apply_formatters_to_dict(
+    {
+        "accessList": apply_formatter_if(
+            is_not_null,
+            apply_list_to_array_formatter(
+                apply_formatters_to_dict(
+                    {
+                        "storageKeys": apply_list_to_array_formatter(to_hex_if_bytes),
+                    }
+                )
+            ),
+        ),
+    }
+)
 transaction_param_formatter = compose(
+    ACCESS_LIST_REQUEST_FORMATTER,
     remove_key_if("to", lambda txn: txn["to"] in {"", b"", None}),
     remove_key_if("gasPrice", lambda txn: txn["gasPrice"] in {"", b"", None}),
 )
@@ -436,7 +457,7 @@ CALL_OVERRIDE_FORMATTERS = {
     "code": to_hex_if_bytes,
 }
 call_with_override: Callable[
-    [Tuple[TxParams, BlockIdentifier, CallOverrideParams]],
+    [Tuple[TxParams, BlockIdentifier, StateOverrideParams]],
     Tuple[Dict[str, Any], int, Dict[str, Any]],
 ] = apply_formatters_to_sequence(
     [
@@ -454,12 +475,31 @@ call_with_override: Callable[
 estimate_gas_without_block_id: Callable[[Dict[str, Any]], Dict[str, Any]]
 estimate_gas_without_block_id = apply_formatter_at_index(transaction_param_formatter, 0)
 estimate_gas_with_block_id: Callable[
-    [Tuple[Dict[str, Any], Union[str, int]]], Tuple[Dict[str, Any], int]
+    [Tuple[Dict[str, Any], BlockIdentifier]], Tuple[Dict[str, Any], int]
 ]
 estimate_gas_with_block_id = apply_formatters_to_sequence(
     [
         transaction_param_formatter,
         to_hex_if_integer,
+    ]
+)
+ESTIMATE_GAS_OVERRIDE_FORMATTERS = {
+    "balance": to_hex_if_integer,
+    "nonce": to_hex_if_integer,
+    "code": to_hex_if_bytes,
+}
+estimate_gas_with_override: Callable[
+    [Tuple[Dict[str, Any], BlockIdentifier, StateOverrideParams]],
+    Tuple[Dict[str, Any], int, Dict[str, Any]],
+] = apply_formatters_to_sequence(
+    [
+        transaction_param_formatter,
+        to_hex_if_integer,
+        lambda val: type_aware_apply_formatters_to_dict_keys_and_values(
+            to_checksum_address,
+            type_aware_apply_formatters_to_dict(ESTIMATE_GAS_OVERRIDE_FORMATTERS),
+            val,
+        ),
     ]
 )
 
@@ -493,6 +533,7 @@ PYTHONIC_REQUEST_FORMATTERS: Dict[RPCEndpoint, Callable[..., Any]] = {
     ),
     RPC.eth_getBalance: apply_formatter_at_index(to_hex_if_integer, 1),
     RPC.eth_getBlockByNumber: apply_formatter_at_index(to_hex_if_integer, 0),
+    RPC.eth_getBlockReceipts: apply_formatter_at_index(to_hex_if_integer, 0),
     RPC.eth_getBlockTransactionCountByNumber: apply_formatter_at_index(
         to_hex_if_integer,
         0,
@@ -530,21 +571,12 @@ PYTHONIC_REQUEST_FORMATTERS: Dict[RPCEndpoint, Callable[..., Any]] = {
         (
             (is_length(1), estimate_gas_without_block_id),
             (is_length(2), estimate_gas_with_block_id),
+            (is_length(3), estimate_gas_with_override),
         )
     ),
     RPC.eth_sendTransaction: apply_formatter_at_index(transaction_param_formatter, 0),
     RPC.eth_signTransaction: apply_formatter_at_index(transaction_param_formatter, 0),
     RPC.eth_getProof: apply_formatter_at_index(to_hex_if_integer, 2),
-    # personal
-    RPC.personal_importRawKey: apply_formatter_at_index(
-        compose(remove_0x_prefix, hexstr_if_str(to_hex)),
-        0,
-    ),
-    RPC.personal_sign: apply_formatter_at_index(text_if_str(to_hex), 0),
-    RPC.personal_ecRecover: apply_formatter_at_index(text_if_str(to_hex), 0),
-    RPC.personal_sendTransaction: apply_formatter_at_index(
-        transaction_param_formatter, 0
-    ),
     # Snapshot and Revert
     RPC.evm_revert: apply_formatter_at_index(integer_to_hex, 0),
     # tracing
@@ -699,6 +731,7 @@ PYTHONIC_RESULT_FORMATTERS: Dict[RPCEndpoint, Callable[..., Any]] = {
     RPC.eth_getBalance: to_integer_if_hex,
     RPC.eth_getBlockByHash: apply_formatter_if(is_not_null, block_formatter),
     RPC.eth_getBlockByNumber: apply_formatter_if(is_not_null, block_formatter),
+    RPC.eth_getBlockReceipts: apply_formatter_to_array(receipt_formatter),
     RPC.eth_getBlockTransactionCountByHash: to_integer_if_hex,
     RPC.eth_getBlockTransactionCountByNumber: to_integer_if_hex,
     RPC.eth_getCode: HexBytes,
@@ -739,13 +772,6 @@ PYTHONIC_RESULT_FORMATTERS: Dict[RPCEndpoint, Callable[..., Any]] = {
     RPC.eth_signTransaction: apply_formatter_if(is_not_null, signed_tx_formatter),
     RPC.eth_signTypedData: HexBytes,
     RPC.eth_syncing: apply_formatter_if(is_not_false, syncing_formatter),
-    # personal
-    RPC.personal_importRawKey: to_checksum_address,
-    RPC.personal_listAccounts: apply_list_to_array_formatter(to_checksum_address),
-    RPC.personal_listWallets: apply_list_to_array_formatter(geth_wallets_formatter),
-    RPC.personal_newAccount: to_checksum_address,
-    RPC.personal_sendTransaction: to_hexbytes(32),
-    RPC.personal_signTypedData: HexBytes,
     # Transaction Pool
     RPC.txpool_content: transaction_pool_content_formatter,
     RPC.txpool_inspect: transaction_pool_inspect_formatter,
@@ -791,6 +817,7 @@ ABI_REQUEST_FORMATTERS: Formatters = abi_request_formatters(
 ERROR_FORMATTERS: Dict[RPCEndpoint, Callable[..., Any]] = {
     RPC.eth_estimateGas: raise_contract_logic_error_on_revert,
     RPC.eth_call: raise_contract_logic_error_on_revert,
+    RPC.eth_getTransactionReceipt: raise_transaction_indexing_error_if_indexing,
 }
 
 
@@ -875,6 +902,7 @@ def raise_transaction_not_found_with_index(
 NULL_RESULT_FORMATTERS: Dict[RPCEndpoint, Callable[..., Any]] = {
     RPC.eth_getBlockByHash: raise_block_not_found,
     RPC.eth_getBlockByNumber: raise_block_not_found,
+    RPC.eth_getBlockReceipts: raise_block_not_found,
     RPC.eth_getBlockTransactionCountByHash: raise_block_not_found,
     RPC.eth_getBlockTransactionCountByNumber: raise_block_not_found,
     RPC.eth_getUncleCountByBlockHash: raise_block_not_found,

@@ -1,5 +1,10 @@
-Sending Transactions
-====================
+Transactions
+============
+
+There are a handful of ways to interact with transactions in web3.py. See the
+:ref:`Web3.eth module <web3-eth-methods>` for a full list of transaction-related methods. Note that you may also :ref:`batch requests <batch_requests>` that read transaction data, but not send new transactions in a batch request.
+
+The rest of this guide covers the decision tree for how to send a transaction.
 
 .. note::
 
@@ -13,7 +18,7 @@ There are two methods for sending transactions using web3.py: :meth:`~web3.eth.E
 
 #. Are you primarily using the same account for all transactions and would you prefer to save a few lines of code?
 
-   * configure :meth:`~web3.middleware.construct_sign_and_send_raw_middleware`, then
+   * configure the ``build`` method for :class:`~web3.middleware.SignAndSendRawMiddlewareBuilder`, then
    * use :meth:`~web3.eth.Eth.send_transaction`
 
 #. Otherwise:
@@ -30,9 +35,11 @@ An example for each can be found below.
 
 
 Chapter 0: ``w3.eth.send_transaction`` with ``eth-tester``
-----------------------------------------------------------
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Many tutorials use ``eth-tester`` (via EthereumTesterProvider) for convenience and speed of conveying ideas/building a proof of concept. Transactions sent by test accounts are auto-signed.
+Many tutorials use ``eth-tester`` (via EthereumTesterProvider) for convenience and speed
+of conveying ideas/building a proof of concept. Transactions sent by test accounts are
+auto-signed.
 
 .. code-block:: python
 
@@ -58,13 +65,15 @@ Many tutorials use ``eth-tester`` (via EthereumTesterProvider) for convenience a
 
 
 Chapter 1: ``w3.eth.send_transaction`` + signer middleware
-----------------------------------------------------------
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-The :meth:`~web3.eth.Eth.send_transaction` method is convenient and to-the-point. If you want to continue using the pattern after graduating from ``eth-tester``, you can utilize web3.py middleware to sign transactions from a particular account:
+The :meth:`~web3.eth.Eth.send_transaction` method is convenient and to-the-point.
+If you want to continue using the pattern after graduating from ``eth-tester``, you can
+utilize web3.py middleware to sign transactions from a particular account:
 
 .. code-block:: python
 
-  from web3.middleware import construct_sign_and_send_raw_middleware
+  from web3.middleware import SignAndSendRawMiddlewareBuilder
   import os
 
   # Note: Never commit your key in your code! Use env variables instead:
@@ -81,8 +90,8 @@ The :meth:`~web3.eth.Eth.send_transaction` method is convenient and to-the-point
   })
 
   # Add acct2 as auto-signer:
-  w3.middleware_onion.add(construct_sign_and_send_raw_middleware(acct2))
-  # pk also works: w3.middleware_onion.add(construct_sign_and_send_raw_middleware(pk))
+  w3.middleware_onion.add(SignAndSendRawMiddlewareBuilder.build(acct2))
+  # pk also works: w3.middleware_onion.add(SignAndSendRawMiddlewareBuilder.build(pk))
 
   # Transactions from `acct2` will then be signed, under the hood, in the middleware:
   tx_hash = w3.eth.send_transaction({
@@ -100,7 +109,7 @@ The :meth:`~web3.eth.Eth.send_transaction` method is convenient and to-the-point
 
 
 Chapter 2: ``w3.eth.send_raw_transaction``
-------------------------------------------
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 if you don't opt for the middleware, you'll need to:
 
@@ -125,13 +134,13 @@ if you don't opt for the middleware, you'll need to:
   signed = w3.eth.account.sign_transaction(transaction, pk)
 
   # 3. Send the signed transaction
-  tx_hash = w3.eth.send_raw_transaction(signed.rawTransaction)
+  tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
   tx = w3.eth.get_transaction(tx_hash)
   assert tx["from"] == acct2.address
 
 
 Chapter 3: Contract transactions
---------------------------------
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 The same concepts apply for contract interactions, at least under the hood.
 
@@ -182,6 +191,6 @@ Executing a function on a smart contract requires sending a transaction, which i
 
   # Send the raw transaction:
   assert billboard.functions.message().call() == "gm"
-  tx_hash = w3.eth.send_raw_transaction(signed_tx.rawTransaction)
+  tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
   w3.eth.wait_for_transaction_receipt(tx_hash)
   assert billboard.functions.message().call() == "gn"

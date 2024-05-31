@@ -8,7 +8,7 @@ from eth_utils import (
 
 @to_tuple
 def deploy_contracts(w3, contract, wait_for_transaction):
-    for i in range(25):
+    for _ in range(25):
         tx_hash = contract.constructor().transact()
         wait_for_transaction(w3, tx_hash)
         yield w3.eth.get_transaction_receipt(tx_hash)["contractAddress"]
@@ -47,10 +47,12 @@ def test_event_filter_new_events(
 
     if api_style == "build_filter":
         builder = emitter.events.LogNoArguments.build_filter()
-        builder.fromBlock = "latest"
+        builder.from_block = "latest"
         event_filter = builder.deploy(w3)
     else:
-        event_filter = emitter.events.LogNoArguments().create_filter(fromBlock="latest")
+        event_filter = emitter.events.LogNoArguments().create_filter(
+            from_block="latest"
+        )
 
     expected_match_counter = 0
 
@@ -126,10 +128,12 @@ def test_event_filter_new_events_many_deployed_contracts(
 
     if api_style == "build_filter":
         builder = emitter.events.LogNoArguments.build_filter()
-        builder.fromBlock = "latest"
+        builder.from_block = "latest"
         event_filter = builder.deploy(w3)
     else:
-        event_filter = emitter.events.LogNoArguments().create_filter(fromBlock="latest")
+        event_filter = emitter.events.LogNoArguments().create_filter(
+            from_block="latest"
+        )
 
     expected_match_counter = 0
 
@@ -151,7 +155,7 @@ def test_event_filter_new_events_many_deployed_contracts(
 
 async def async_deploy_contracts(async_w3, contract, async_wait_for_transaction):
     txs = []
-    for i in range(25):
+    for _ in range(25):
         tx_hash = await contract.constructor().transact()
         await async_wait_for_transaction(async_w3, tx_hash)
         tx = await async_w3.eth.get_transaction_receipt(tx_hash)
@@ -194,11 +198,11 @@ async def test_async_event_filter_new_events(
 
     if api_style == "build_filter":
         builder = async_emitter.events.LogNoArguments.build_filter()
-        builder.fromBlock = "latest"
+        builder.from_block = "latest"
         event_filter = await builder.deploy(async_w3)
     else:
         event_filter = await async_emitter.events.LogNoArguments().create_filter(
-            fromBlock="latest"
+            from_block="latest"
         )
 
     expected_match_counter = 0
@@ -286,11 +290,11 @@ async def test_async_event_filter_new_events_many_deployed_contracts(
 
     if api_style == "build_filter":
         builder = async_emitter.events.LogNoArguments.build_filter()
-        builder.fromBlock = "latest"
+        builder.from_block = "latest"
         event_filter = await builder.deploy(async_w3)
     else:
         event_filter = await async_emitter.events.LogNoArguments().create_filter(
-            fromBlock="latest"
+            from_block="latest"
         )
 
     expected_match_counter = 0

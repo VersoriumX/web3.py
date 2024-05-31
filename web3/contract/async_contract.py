@@ -39,7 +39,6 @@ from web3._utils.compat import (
 )
 from web3._utils.contracts import (
     async_parse_block_identifier,
-    parse_block_identifier_no_extra_call,
 )
 from web3._utils.datatypes import (
     PropertyCheckingFactory,
@@ -83,13 +82,16 @@ from web3.exceptions import (
     ABIFunctionNotFound,
     NoABIFound,
     NoABIFunctionsFound,
+    Web3AttributeError,
+    Web3TypeError,
     Web3ValidationError,
+    Web3ValueError,
 )
 from web3.types import (
     ABI,
     BlockIdentifier,
-    CallOverride,
     EventData,
+    StateOverride,
     TxParams,
 )
 from web3.utils import (
@@ -109,11 +111,12 @@ class AsyncContractEvent(BaseContractEvent):
     async def get_logs(
         self,
         argument_filters: Optional[Dict[str, Any]] = None,
-        fromBlock: Optional[BlockIdentifier] = None,
-        toBlock: Optional[BlockIdentifier] = None,
+        from_block: Optional[BlockIdentifier] = None,
+        to_block: Optional[BlockIdentifier] = None,
         block_hash: Optional[HexBytes] = None,
     ) -> Awaitable[Iterable[EventData]]:
-        """Get events for this contract instance using eth_getLogs API.
+        """
+        Get events for this contract instance using eth_getLogs API.
 
         This is a stateless method, as opposed to createFilter.
         It can be safely called against nodes which do not provide
@@ -132,7 +135,7 @@ class AsyncContractEvent(BaseContractEvent):
             from = max(mycontract.web3.eth.block_number - 10, 1)
             to = mycontract.web3.eth.block_number
 
-            events = mycontract.events.Transfer.getLogs(fromBlock=from, toBlock=to)
+            events = mycontract.events.Transfer.getLogs(from_block=from, to_block=to)
 
             for e in events:
                 print(e["args"]["from"],
@@ -158,14 +161,14 @@ class AsyncContractEvent(BaseContractEvent):
                 ...
             )
 
-        See also: :func:`web3.middleware.filter.local_filter_middleware`.
+        See also: :func:`web3.middleware.filter.LocalFilterMiddleware`.
 
         :param argument_filters: Filter by argument values. Indexed arguments are
           filtered by the node while non-indexed arguments are filtered by the library.
-        :param fromBlock: block number or "latest", defaults to "latest"
-        :param toBlock: block number or "latest". Defaults to "latest"
+        :param from_block: block number or "latest", defaults to "latest"
+        :param to_block: block number or "latest". Defaults to "latest"
         :param block_hash: block hash. Cannot be set at the
-          same time as fromBlock or toBlock
+          same time as ``from_block`` or ``to_block``
         :yield: Tuple of :class:`AttributeDict` instances
         """
         event_abi = self._get_event_abi()
@@ -180,7 +183,7 @@ class AsyncContractEvent(BaseContractEvent):
                 )
 
         _filter_params = self._get_event_filter_params(
-            event_abi, argument_filters, fromBlock, toBlock, block_hash
+            event_abi, argument_filters, from_block, to_block, block_hash
         )
         # call JSON-RPC API
         logs = await self.w3.eth.get_logs(_filter_params)
@@ -201,8 +204,8 @@ class AsyncContractEvent(BaseContractEvent):
         self,
         *,  # PEP 3102
         argument_filters: Optional[Dict[str, Any]] = None,
-        fromBlock: Optional[BlockIdentifier] = None,
-        toBlock: BlockIdentifier = "latest",
+        from_block: Optional[BlockIdentifier] = None,
+        to_block: BlockIdentifier = "latest",
         address: Optional[ChecksumAddress] = None,
         topics: Optional[Sequence[Any]] = None,
     ) -> AsyncLogFilter:
@@ -212,8 +215,8 @@ class AsyncContractEvent(BaseContractEvent):
         filter_builder = AsyncEventFilterBuilder(self._get_event_abi(), self.w3.codec)
         self._set_up_filter_builder(
             argument_filters,
-            fromBlock,
-            toBlock,
+            from_block,
+            to_block,
             address,
             topics,
             filter_builder,
@@ -270,7 +273,7 @@ class AsyncContractFunction(BaseContractFunction):
         self,
         transaction: Optional[TxParams] = None,
         block_identifier: BlockIdentifier = None,
-        state_override: Optional[CallOverride] = None,
+        state_override: Optional[StateOverride] = None,
         ccip_read_enabled: Optional[bool] = None,
     ) -> Any:
         """
@@ -337,6 +340,7 @@ class AsyncContractFunction(BaseContractFunction):
         self,
         transaction: Optional[TxParams] = None,
         block_identifier: Optional[BlockIdentifier] = None,
+        state_override: Optional[StateOverride] = None,
     ) -> int:
         setup_transaction = self._estimate_gas(transaction)
         return await async_estimate_gas_for_function(
@@ -347,6 +351,7 @@ class AsyncContractFunction(BaseContractFunction):
             self.contract_abi,
             self.abi,
             block_identifier,
+            state_override,
             *self.args,
             **self.kwargs,
         )
@@ -439,12 +444,13 @@ class AsyncContract(BaseContract):
     events: AsyncContractEvents = None
 
     def __init__(self, address: Optional[ChecksumAddress] = None) -> None:
-        """Create a new smart contract proxy object.
+        """
+        Create a new smart contract proxy object.
 
-        :param address: Contract address as 0x hex string"""
-
+        :param address: Contract address as 0x hex string
+        """
         if self.w3 is None:
-            raise AttributeError(
+            raise Web3AttributeError(
                 "The `Contract` class has not been initialized.  Please use the "
                 "`web3.contract` interface to create your contract class."
             )
@@ -453,7 +459,7 @@ class AsyncContract(BaseContract):
             self.address = normalize_address_no_ens(address)
 
         if not self.address:
-            raise TypeError(
+            raise Web3TypeError(
                 "The address argument is required to instantiate a contract."
             )
         self.functions = AsyncContractFunctions(
@@ -515,14 +521,14 @@ class AsyncContract(BaseContract):
         return contract
 
     @classmethod
-    def constructor(cls, *args: Any, **kwargs: Any) -> Self:
+    def constructor(cls, *args: Any, **kwargs: Any) -> "AsyncContractConstructor":
         """
         :param args: The contract constructor arguments as positional arguments
         :param kwargs: The contract constructor arguments as keyword arguments
         :return: a contract constructor object
         """
         if cls.bytecode is None:
-            raise ValueError(
+            raise Web3ValueError(
                 "Cannot call constructor on a contract that does not have "
                 "'bytecode' associated with it"
             )
@@ -582,15 +588,11 @@ class AsyncContractCaller(BaseContractCaller):
                     decode_tuples=decode_tuples,
                 )
 
-                # TODO: The no_extra_call method gets around the fact that we can't call
-                #  the full async method from within a class's __init__ method. We need
-                #  to see if there's a way to account for all desired elif cases.
-                block_id = parse_block_identifier_no_extra_call(w3, block_identifier)
                 caller_method = partial(
                     self.call_function,
                     fn,
                     transaction=transaction,
-                    block_identifier=block_id,
+                    block_identifier=block_identifier,
                     ccip_read_enabled=ccip_read_enabled,
                 )
 

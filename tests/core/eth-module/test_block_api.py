@@ -7,26 +7,19 @@ from hexbytes import (
     HexBytes,
 )
 
-from web3._utils.rpc_abi import (
-    RPC,
-)
-from web3.middleware import (
-    construct_result_generator_middleware,
-)
-
 
 @pytest.fixture(autouse=True)
 def wait_for_first_block(w3, wait_for_block):
     wait_for_block(w3)
 
 
-def test_uses_default_block(w3, extra_accounts, wait_for_transaction):
+def test_uses_default_block(w3, wait_for_transaction):
     assert w3.eth.default_block == "latest"
     w3.eth.default_block = w3.eth.block_number
     assert w3.eth.default_block == w3.eth.block_number
 
 
-def test_get_block_formatters_with_null_values(w3):
+def test_get_block_formatters_with_null_values(w3, request_mocker):
     null_values_block = {
         "baseFeePerGas": None,
         "extraData": None,
@@ -50,20 +43,16 @@ def test_get_block_formatters_with_null_values(w3):
         "transactions": [],
         "withdrawalsRoot": None,
         "withdrawals": [],
+        "blobGasUsed": None,
+        "excessBlobGas": None,
+        "parentBeaconBlockRoot": None,
     }
-    result_middleware = construct_result_generator_middleware(
-        {
-            RPC.eth_getBlockByNumber: lambda *_: null_values_block,
-        }
-    )
-
-    w3.middleware_onion.inject(result_middleware, "result_middleware", layer=0)
-
-    received_block = w3.eth.get_block("pending")
+    with request_mocker(w3, mock_results={"eth_getBlockByNumber": null_values_block}):
+        received_block = w3.eth.get_block("pending")
     assert received_block == null_values_block
 
 
-def test_get_block_formatters_with_pre_formatted_values(w3):
+def test_get_block_formatters_with_pre_formatted_values(w3, request_mocker):
     unformatted_values_block = {
         "baseFeePerGas": "0x3b9aca00",
         "extraData": "0x",
@@ -115,16 +104,17 @@ def test_get_block_formatters_with_pre_formatted_values(w3):
                 "amount": "0x3f695",
             },
         ],
+        "blobGasUsed": "0x7ffff",
+        "excessBlobGas": "0x12c00000",
+        "parentBeaconBlockRoot": (
+            "0x6470e77f1b8a55a49a57b3f74c2a10a76185636d65122053752ea5e4bb4dac59"
+        ),
     }
-    result_middleware = construct_result_generator_middleware(
-        {
-            RPC.eth_getBlockByNumber: lambda *_: unformatted_values_block,
-        }
-    )
 
-    w3.middleware_onion.inject(result_middleware, "result_middleware", layer=0)
-
-    received_block = w3.eth.get_block("pending")
+    with request_mocker(
+        w3, mock_results={"eth_getBlockByNumber": unformatted_values_block}
+    ):
+        received_block = w3.eth.get_block("pending")
 
     assert received_block == {
         "baseFeePerGas": int(unformatted_values_block["baseFeePerGas"], 16),
@@ -175,4 +165,9 @@ def test_get_block_formatters_with_pre_formatted_values(w3):
                 "amount": int(unformatted_values_block["withdrawals"][1]["amount"], 16),
             },
         ],
+        "blobGasUsed": int(unformatted_values_block["blobGasUsed"], 16),
+        "excessBlobGas": int(unformatted_values_block["excessBlobGas"], 16),
+        "parentBeaconBlockRoot": HexBytes(
+            unformatted_values_block["parentBeaconBlockRoot"]
+        ),
     }

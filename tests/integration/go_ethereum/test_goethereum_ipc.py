@@ -2,39 +2,37 @@ import os
 import pytest
 import tempfile
 
-from tests.integration.common import (
-    COINBASE,
-)
-from tests.utils import (
-    get_open_port,
-)
+import pytest_asyncio
+
 from web3 import (
+    AsyncIPCProvider,
+    AsyncWeb3,
     Web3,
+)
+from web3._utils.module_testing.persistent_connection_provider import (
+    PersistentConnectionProviderTest,
 )
 
 from .common import (
     GoEthereumAdminModuleTest,
+    GoEthereumAsyncEthModuleTest,
+    GoEthereumAsyncNetModuleTest,
+    GoEthereumAsyncWeb3ModuleTest,
     GoEthereumEthModuleTest,
     GoEthereumNetModuleTest,
-    GoEthereumPersonalModuleTest,
-    GoEthereumTest,
+    GoEthereumWeb3ModuleTest,
 )
 from .utils import (
+    wait_for_async_socket,
     wait_for_socket,
 )
 
 
 def _geth_command_arguments(geth_ipc_path, base_geth_command_arguments):
-    geth_port = get_open_port()
     yield from base_geth_command_arguments
     yield from (
-        "--port",
-        geth_port,
         "--ipcpath",
         geth_ipc_path,
-        "--miner.etherbase",
-        COINBASE[2:],
-        "--rpc.enabledeprecatedpersonal",
     )
 
 
@@ -56,11 +54,18 @@ def geth_ipc_path(datadir):
 @pytest.fixture(scope="module")
 def w3(geth_process, geth_ipc_path):
     wait_for_socket(geth_ipc_path)
-    _w3 = Web3(Web3.IPCProvider(geth_ipc_path, timeout=30))
-    return _w3
+    return Web3(Web3.IPCProvider(geth_ipc_path, timeout=30))
 
 
-class TestGoEthereumTest(GoEthereumTest):
+class TestGoEthereumWeb3ModuleTest(GoEthereumWeb3ModuleTest):
+    pass
+
+
+class TestGoEthereumEthModuleTest(GoEthereumEthModuleTest):
+    pass
+
+
+class TestGoEthereumNetModuleTest(GoEthereumNetModuleTest):
     pass
 
 
@@ -84,13 +89,27 @@ class TestGoEthereumAdminModuleTest(GoEthereumAdminModuleTest):
         super().test_admin_start_stop_ws(w3)
 
 
-class TestGoEthereumEthModuleTest(GoEthereumEthModuleTest):
+# -- async -- #
+
+
+@pytest_asyncio.fixture(scope="module")
+async def async_w3(geth_process, geth_ipc_path):
+    await wait_for_async_socket(geth_ipc_path)
+    async with AsyncWeb3(AsyncIPCProvider(geth_ipc_path)) as _aw3:
+        yield _aw3
+
+
+class TestGoEthereumAsyncWeb3ModuleTest(GoEthereumAsyncWeb3ModuleTest):
     pass
 
 
-class TestGoEthereumNetModuleTest(GoEthereumNetModuleTest):
+class TestGoEthereumAsyncEthModuleTest(GoEthereumAsyncEthModuleTest):
     pass
 
 
-class TestGoEthereumPersonalModuleTest(GoEthereumPersonalModuleTest):
+class TestGoEthereumAsyncNetModuleTest(GoEthereumAsyncNetModuleTest):
+    pass
+
+
+class TestPersistentConnectionProviderTest(PersistentConnectionProviderTest):
     pass

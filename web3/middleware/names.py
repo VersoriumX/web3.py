@@ -1,10 +1,10 @@
 from typing import (
     TYPE_CHECKING,
     Any,
-    Callable,
     Dict,
     Sequence,
     Union,
+    cast,
 )
 
 from toolz import (
@@ -20,8 +20,6 @@ from web3._utils.rpc_abi import (
     abi_request_formatters,
 )
 from web3.types import (
-    AsyncMiddlewareCoroutine,
-    Middleware,
     RPCEndpoint,
 )
 
@@ -33,8 +31,14 @@ from .._utils.abi import (
 from .._utils.formatters import (
     recursive_map,
 )
+from ..exceptions import (
+    Web3TypeError,
+)
+from .base import (
+    Web3Middleware,
+)
 from .formatting import (
-    construct_formatting_middleware,
+    FormattingMiddlewareBuilder,
 )
 
 if TYPE_CHECKING:
@@ -42,18 +46,6 @@ if TYPE_CHECKING:
         AsyncWeb3,
         Web3,
     )
-
-
-def name_to_address_middleware(w3: "Web3") -> Middleware:
-    normalizers = [
-        abi_ens_resolver(w3),
-    ]
-    return construct_formatting_middleware(
-        request_formatters=abi_request_formatters(normalizers, RPC_ABIS)
-    )
-
-
-# -- async -- #
 
 
 def _is_logs_subscription_with_optional_args(method: RPCEndpoint, params: Any) -> bool:
@@ -103,17 +95,29 @@ async def async_apply_ens_to_address_conversion(
         return (formatted_params_dict, *params[1:])
 
     else:
-        raise TypeError(
+        raise Web3TypeError(
             f"ABI definitions must be a list or dictionary, "
             f"got {abi_types_for_method!r}"
         )
 
 
-async def async_name_to_address_middleware(
-    make_request: Callable[[RPCEndpoint, Any], Any],
-    async_w3: "AsyncWeb3",
-) -> AsyncMiddlewareCoroutine:
-    async def middleware(method: RPCEndpoint, params: Any) -> Any:
+class ENSNameToAddressMiddleware(Web3Middleware):
+    _formatting_middleware = None
+
+    def request_processor(self, method: "RPCEndpoint", params: Any) -> Any:
+        if self._formatting_middleware is None:
+            normalizers = [
+                abi_ens_resolver(self._w3),
+            ]
+            self._formatting_middleware = FormattingMiddlewareBuilder.build(
+                request_formatters=abi_request_formatters(normalizers, RPC_ABIS)
+            )
+
+        return self._formatting_middleware(self._w3).request_processor(method, params)
+
+    # -- async -- #
+
+    async def async_request_processor(self, method: "RPCEndpoint", params: Any) -> Any:
         abi_types_for_method = RPC_ABIS.get(method, None)
 
         if abi_types_for_method is not None:
@@ -121,7 +125,7 @@ async def async_name_to_address_middleware(
                 # eth_subscribe optional logs params are unique.
                 # Handle them separately here.
                 (formatted_dict,) = await async_apply_ens_to_address_conversion(
-                    async_w3,
+                    cast("AsyncWeb3", self._w3),
                     (params[1],),
                     {
                         "address": "address",
@@ -132,10 +136,9 @@ async def async_name_to_address_middleware(
 
             else:
                 params = await async_apply_ens_to_address_conversion(
-                    async_w3,
+                    cast("AsyncWeb3", self._w3),
                     params,
                     abi_types_for_method,
                 )
-        return await make_request(method, params)
 
-    return middleware
+        return method, params

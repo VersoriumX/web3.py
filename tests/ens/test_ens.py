@@ -1,5 +1,4 @@
 import pytest
-import sys
 from unittest.mock import (
     patch,
 )
@@ -15,8 +14,8 @@ from web3 import (
     AsyncWeb3,
 )
 from web3.middleware import (
-    async_validation_middleware,
-    gas_price_strategy_middleware,
+    GasPriceStrategyMiddleware,
+    ValidationMiddleware,
 )
 from web3.providers.eth_tester import (
     AsyncEthereumTesterProvider,
@@ -24,11 +23,11 @@ from web3.providers.eth_tester import (
 
 
 def _args_list_to_set(call_args_list):
-    return set(call_arg.args[0] for call_arg in call_args_list)
+    return {call_arg.args[0] for call_arg in call_args_list}
 
 
-def test_from_web3_inherits_web3_middlewares(w3):
-    test_middleware = gas_price_strategy_middleware
+def test_from_web3_inherits_web3_middleware(w3):
+    test_middleware = GasPriceStrategyMiddleware
     w3.middleware_onion.add(test_middleware, "test_middleware")
 
     ns = ENS.from_web3(w3)
@@ -108,12 +107,6 @@ def test_ens_strict_bytes_type_checking_is_distinct_from_w3_instance(w3):
         ("get_text", ("tester.eth", "url")),
     ),
 )
-@pytest.mark.skipif(
-    # TODO: remove when python 3.7 is no longer supported in web3.py
-    #  python 3.7 is already sunset so this feel like a reasonable tradeoff
-    sys.version_info < (3, 8),
-    reason="Mock args behave differently in python 3.7 but test should still pass.",
-)
 def test_ens_methods_normalize_name(
     ens,
     method_str,
@@ -125,7 +118,9 @@ def test_ens_methods_normalize_name(
     # normalizes the full name and each label
     expected_call_args = {"tester.eth", "tester", "eth"}
 
-    with patch("ens.utils.normalize_name_ensip15") as mock_normalize_name_ensip15:
+    with patch(
+        "ens._normalization.normalize_name_ensip15"
+    ) as mock_normalize_name_ensip15:
         mock_normalize_name_ensip15.side_effect = normalize_name_ensip15
 
         # test setup address while appropriately setting up the test
@@ -156,8 +151,8 @@ def local_async_w3():
     return AsyncWeb3(AsyncEthereumTesterProvider())
 
 
-def test_async_from_web3_inherits_web3_middlewares(local_async_w3):
-    test_middleware = async_validation_middleware
+def test_async_from_web3_inherits_web3_middleware(local_async_w3):
+    test_middleware = ValidationMiddleware
     local_async_w3.middleware_onion.add(test_middleware, "test_middleware")
 
     ns = AsyncENS.from_web3(local_async_w3)
@@ -238,12 +233,6 @@ def test_async_ens_strict_bytes_type_checking_is_distinct_from_w3_instance(
     ),
 )
 @pytest.mark.asyncio
-@pytest.mark.skipif(
-    # TODO: remove when python 3.7 is no longer supported in web3.py
-    #  python 3.7 is already sunset so this feel like a reasonable tradeoff
-    sys.version_info < (3, 8),
-    reason="Mock args behave differently in python 3.7 but test should still pass.",
-)
 async def test_async_ens_methods_normalize_name_with_ensip15(
     async_ens,
     method_str,
@@ -256,7 +245,9 @@ async def test_async_ens_methods_normalize_name_with_ensip15(
     # normalizes the full name and each label
     expected_call_args = {"tester.eth", "tester", "eth"}
 
-    with patch("ens.utils.normalize_name_ensip15") as mock_normalize_name_ensip15:
+    with patch(
+        "ens._normalization.normalize_name_ensip15"
+    ) as mock_normalize_name_ensip15:
         mock_normalize_name_ensip15.side_effect = normalize_name_ensip15
 
         # test setup address while appropriately setting up the test

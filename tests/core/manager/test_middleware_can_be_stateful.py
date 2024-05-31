@@ -1,26 +1,32 @@
 from web3.manager import (
     RequestManager,
 )
+from web3.middleware.base import (
+    Web3Middleware,
+)
 from web3.providers import (
     BaseProvider,
 )
 
 
-def stateful_middleware(make_request, w3):
+class StatefulMiddleware(Web3Middleware):
     state = []
 
-    def middleware(method, params):
-        state.append((method, params))
-        return {"result": state}
+    def wrap_make_request(self, make_request):
+        def middleware(method, params):
+            self.state.append((method, params))
+            return {"jsonrpc": "2.0", "id": 1, "result": self.state}
 
-    middleware.state = state
-    return middleware
+        return middleware
+
+
+stateful_middleware = StatefulMiddleware
 
 
 def test_middleware_holds_state_across_requests():
     provider = BaseProvider()
 
-    manager = RequestManager(None, provider, middlewares=[stateful_middleware])
+    manager = RequestManager(None, provider, middleware=[stateful_middleware])
     state_a = manager.request_blocking("test_statefulness", [])
     assert len(state_a) == 1
 

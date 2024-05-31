@@ -14,6 +14,9 @@ from web3 import (
     EthereumTesterProvider,
     Web3,
 )
+from web3.exceptions import (
+    Web3ValueError,
+)
 from web3.method import (
     Method,
     _apply_request_formatters,
@@ -42,7 +45,7 @@ def test_method_selector_fn_accepts_str():
 
 
 def test_method_selector_fn_invalid_arg():
-    with pytest.raises(ValueError):
+    with pytest.raises(Web3ValueError):
         method = Method(
             mungers=[],
             json_rpc_method=555555,
@@ -201,7 +204,7 @@ def test_property_with_mungers_raises_ValidationError():
             },
             [],
             {},
-            ValueError,
+            Web3ValueError,
         ),
         (
             {
@@ -369,7 +372,7 @@ class FakeModule(Module):
 
 @pytest.fixture
 def dummy_w3():
-    return Web3(EthereumTesterProvider(), modules={"fake": FakeModule}, middlewares=[])
+    return Web3(EthereumTesterProvider(), modules={"fake": FakeModule})
 
 
 def test_munger_class_method_access_raises_friendly_error():

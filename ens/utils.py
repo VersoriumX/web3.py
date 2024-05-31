@@ -5,7 +5,6 @@ from datetime import (
 from typing import (
     TYPE_CHECKING,
     Any,
-    Callable,
     Collection,
     Dict,
     List,
@@ -36,9 +35,11 @@ from hexbytes import (
     HexBytes,
 )
 
-from ._normalization import (
-    normalize_name_ensip15,
+from ens.exceptions import (
+    ENSTypeError,
+    ENSValueError,
 )
+
 from .constants import (
     ACCEPTABLE_STALE_HOURS,
     AUCTION_START_GAS_CONSTANT,
@@ -60,15 +61,15 @@ if TYPE_CHECKING:
         AsyncWeb3,
         Web3 as _Web3,
     )
+    from web3.middleware.base import (
+        Middleware,
+    )
     from web3.providers import (  # noqa: F401
         AsyncBaseProvider,
         BaseProvider,
     )
     from web3.types import (  # noqa: F401
         ABIFunction,
-        AsyncMiddleware,
-        Middleware,
-        RPCEndpoint,
     )
 
 
@@ -81,8 +82,8 @@ def Web3() -> Type["_Web3"]:
 
 
 def init_web3(
-    provider: "BaseProvider" = cast("BaseProvider", default),
-    middlewares: Optional[Sequence[Tuple["Middleware", str]]] = None,
+    provider: "BaseProvider" = None,
+    middleware: Optional[Sequence[Tuple["Middleware", str]]] = None,
 ) -> "_Web3":
     from web3 import (
         Web3 as Web3Main,
@@ -91,39 +92,46 @@ def init_web3(
         Eth as EthMain,
     )
 
+    provider = provider or cast("BaseProvider", default)
     if provider is default:
         w3 = Web3Main(ens=None, modules={"eth": (EthMain)})
     else:
-        w3 = Web3Main(provider, middlewares, ens=None, modules={"eth": (EthMain)})
+        w3 = Web3Main(provider, middleware, ens=None, modules={"eth": (EthMain)})
 
     return customize_web3(w3)
 
 
 def customize_web3(w3: "_Web3") -> "_Web3":
     from web3.middleware import (
-        make_stalecheck_middleware,
+        StalecheckMiddlewareBuilder,
     )
 
-    if w3.middleware_onion.get("name_to_address"):
-        w3.middleware_onion.remove("name_to_address")
+    if w3.middleware_onion.get("ens_name_to_address"):
+        w3.middleware_onion.remove("ens_name_to_address")
 
     if not w3.middleware_onion.get("stalecheck"):
-        w3.middleware_onion.add(
-            make_stalecheck_middleware(ACCEPTABLE_STALE_HOURS * 3600), name="stalecheck"
+        stalecheck_middleware = StalecheckMiddlewareBuilder.build(
+            ACCEPTABLE_STALE_HOURS * 3600
         )
+        w3.middleware_onion.add(stalecheck_middleware, name="stalecheck")
     return w3
 
 
 def normalize_name(name: str) -> str:
     """
     Clean the fully qualified name, as defined in ENS `EIP-137
-    <https://github.com/ethereum/EIPs/blob/master/EIPS/eip-137.md#name-syntax>`_
+    <https://github.com/ethereum/EIPs/blob/master/EIPS/eip-137.md#name-syntax>`_  # blocklint: pragma # noqa: E501
 
     This does *not* enforce whether ``name`` is a label or fully qualified domain.
 
     :param str name: the dot-separated ENS name
     :raises InvalidName: if ``name`` has invalid syntax
     """
+    # Defer import because module initialization takes > 0.1 ms
+    from ._normalization import (
+        normalize_name_ensip15,
+    )
+
     if is_empty_name(name):
         return ""
     elif isinstance(name, (bytes, bytearray)):
@@ -133,7 +141,7 @@ def normalize_name(name: str) -> str:
 
 
 def ens_encode_name(name: str) -> bytes:
-    """
+    r"""
     Encode a name according to DNS standards specified in section 3.1
     of RFC1035 with the following validations:
 
@@ -169,7 +177,7 @@ def ens_encode_name(name: str) -> bytes:
 def is_valid_name(name: str) -> bool:
     """
     Validate whether the fully qualified name is valid, as defined in ENS `EIP-137
-    <https://github.com/ethereum/EIPs/blob/master/EIPS/eip-137.md#name-syntax>`_
+    <https://github.com/ethereum/EIPs/blob/master/EIPS/eip-137.md#name-syntax>`_  # blocklint: pragma # noqa: E501
 
     :param str name: the dot-separated ENS name
     :returns: True if ``name`` is set, and :meth:`~ens.ENS.nameprep` will not
@@ -197,17 +205,17 @@ def sha3_text(val: Union[str, bytes]) -> HexBytes:
 def label_to_hash(label: str) -> HexBytes:
     label = normalize_name(label)
     if "." in label:
-        raise ValueError(f"Cannot generate hash for label {label!r} with a '.'")
+        raise ENSValueError(f"Cannot generate hash for label {label!r} with a '.'")
     return Web3().keccak(text=label)
 
 
 def normal_name_to_hash(name: str) -> HexBytes:
     """
-    This method will not normalize the name. 'normal' name here means the name
-    should already be normalized before calling this method.
+    Hashes a pre-normalized name.
+    The normalization of the name is a prerequisite and is not handled by this function.
 
-    :param name:            the name to hash - should already be normalized
-    :return: namehash       the hash of the name
+    :param str name: A normalized name string to be hashed.
+    :return: namehash - the hash of the name
     :rtype: HexBytes
     """
     node = EMPTY_SHA3_BYTES
@@ -229,7 +237,7 @@ def raw_name_to_hash(name: str) -> HexBytes:
     behind the scenes. For advanced usage, it is a helpful utility.
 
     This normalizes the name with `nameprep
-    <https://github.com/ethereum/EIPs/blob/master/EIPS/eip-137.md#name-syntax>`_
+    <https://github.com/ethereum/EIPs/blob/master/EIPS/eip-137.md#name-syntax>`_  # blocklint: pragma # noqa: E501
     before hashing.
 
     :param str name: ENS name to hash
@@ -262,7 +270,7 @@ def assert_signer_in_modifier_kwargs(modifier_kwargs: Any) -> ChecksumAddress:
 
     _modifier_type, modifier_dict = dict(modifier_kwargs).popitem()
     if "from" not in modifier_dict:
-        raise TypeError(ERR_MSG)
+        raise ENSTypeError(ERR_MSG)
 
     return modifier_dict["from"]
 
@@ -298,8 +306,8 @@ def get_abi_output_types(abi: "ABIFunction") -> List[str]:
 
 
 def init_async_web3(
-    provider: "AsyncBaseProvider" = cast("AsyncBaseProvider", default),
-    middlewares: Optional[Sequence[Tuple["AsyncMiddleware", str]]] = (),
+    provider: "AsyncBaseProvider" = None,
+    middleware: Optional[Sequence[Tuple["Middleware", str]]] = (),
 ) -> "AsyncWeb3":
     from web3 import (
         AsyncWeb3 as AsyncWeb3Main,
@@ -307,36 +315,34 @@ def init_async_web3(
     from web3.eth import (
         AsyncEth as AsyncEthMain,
     )
+    from web3.middleware import (
+        StalecheckMiddlewareBuilder,
+    )
 
-    middlewares = list(middlewares)
-    for i, (middleware, name) in enumerate(middlewares):
-        if name == "name_to_address":
-            middlewares.pop(i)
+    provider = provider or cast("AsyncBaseProvider", default)
+    middleware = list(middleware)
+    for i, (_mw, name) in enumerate(middleware):
+        if name == "ens_name_to_address":
+            middleware.pop(i)
 
-    if "stalecheck" not in (name for mw, name in middlewares):
-        middlewares.append((_async_ens_stalecheck_middleware, "stalecheck"))
+    if "stalecheck" not in (name for mw, name in middleware):
+        middleware.append(
+            (
+                StalecheckMiddlewareBuilder.build(ACCEPTABLE_STALE_HOURS * 3600),
+                "stalecheck",
+            )
+        )
 
     if provider is default:
         async_w3 = AsyncWeb3Main(
-            middlewares=middlewares, ens=None, modules={"eth": (AsyncEthMain)}
+            middleware=middleware, ens=None, modules={"eth": (AsyncEthMain)}
         )
     else:
         async_w3 = AsyncWeb3Main(
             provider,
-            middlewares=middlewares,
+            middleware=middleware,
             ens=None,
             modules={"eth": (AsyncEthMain)},
         )
 
     return async_w3
-
-
-async def _async_ens_stalecheck_middleware(
-    make_request: Callable[["RPCEndpoint", Any], Any], w3: "AsyncWeb3"
-) -> "Middleware":
-    from web3.middleware import (
-        async_make_stalecheck_middleware,
-    )
-
-    middleware = await async_make_stalecheck_middleware(ACCEPTABLE_STALE_HOURS * 3600)
-    return await middleware(make_request, w3)

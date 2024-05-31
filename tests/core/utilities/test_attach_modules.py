@@ -14,6 +14,7 @@ from web3._utils.module import (
     attach_modules,
 )
 from web3.exceptions import (
+    Web3AttributeError,
     Web3ValidationError,
 )
 from web3.module import (
@@ -38,17 +39,11 @@ class MockGethAdmin(Module):
         return True
 
 
-class MockGethPersonal(Module):
-    def unlock_account(self):
-        return True
-
-
 def test_attach_modules():
     mods = {
         "geth": (
             MockGeth,
             {
-                "personal": MockGethPersonal,
                 "admin": MockGethAdmin,
             },
         ),
@@ -57,7 +52,6 @@ def test_attach_modules():
     w3 = Web3(EthereumTesterProvider(), modules={})
     attach_modules(w3, mods)
     assert w3.eth.block_number() == 42
-    assert w3.geth.personal.unlock_account() is True
     assert w3.geth.admin.start_ws() is True
 
 
@@ -66,14 +60,14 @@ def test_attach_single_module_as_tuple():
     assert w3.eth.block_number() == 42
 
 
-def test_attach_modules_multiple_levels_deep():
+def test_attach_modules_multiple_levels_deep(module1):
     mods = {
         "eth": MockEth,
         "geth": (
             MockGeth,
             {
-                "personal": (
-                    MockGethPersonal,
+                "module1": (
+                    module1,
                     {
                         "admin": MockGethAdmin,
                     },
@@ -84,12 +78,11 @@ def test_attach_modules_multiple_levels_deep():
     w3 = Web3(EthereumTesterProvider(), modules={})
     attach_modules(w3, mods)
     assert w3.eth.block_number() == 42
-    assert w3.geth.personal.unlock_account() is True
-    assert w3.geth.personal.admin.start_ws() is True
+    assert w3.geth.module1.admin.start_ws() is True
 
 
 def test_attach_modules_with_wrong_module_format():
-    mods = {"eth": (MockEth, MockGeth, MockGethPersonal)}
+    mods = {"eth": (MockEth, MockEth, MockEth)}
     w3 = Web3(EthereumTesterProvider, modules={})
     with pytest.raises(
         Web3ValidationError, match="Module definitions can only have 1 or 2 elements"
@@ -103,7 +96,8 @@ def test_attach_modules_with_existing_modules():
     }
     w3 = Web3(EthereumTesterProvider, modules=mods)
     with pytest.raises(
-        AttributeError, match="The web3 object already has an attribute with that name"
+        Web3AttributeError,
+        match=("The web3 object already has an attribute with that name"),
     ):
         attach_modules(w3, mods)
 

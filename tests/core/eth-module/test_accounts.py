@@ -1,7 +1,4 @@
 import pytest
-
-# coding=utf-8
-import sys
 from unittest.mock import (
     patch,
 )
@@ -135,7 +132,7 @@ def test_eth_account_from_key_seed_restrictions(acct):
 
 def test_eth_account_from_key_properties(acct, PRIVATE_BYTES):
     account = acct.from_key(PRIVATE_BYTES)
-    assert callable(account.signHash)
+    assert callable(account.unsafe_sign_hash)
     assert callable(account.sign_transaction)
     assert is_checksum_address(account.address)
     assert account.address == "0xa79F6f349C853F9Ea0B29636779ae3Cb4E3BA729"
@@ -144,7 +141,7 @@ def test_eth_account_from_key_properties(acct, PRIVATE_BYTES):
 
 def test_eth_account_create_properties(acct):
     account = acct.create()
-    assert callable(account.signHash)
+    assert callable(account.unsafe_sign_hash)
     assert callable(account.sign_transaction)
     assert is_checksum_address(account.address)
     assert isinstance(account.key, bytes) and len(account.key) == 32
@@ -268,7 +265,7 @@ def test_eth_account_sign(
     assert signed_message == expected_hash
 
     signed = acct.sign_message(message, private_key=key)
-    assert signed.messageHash == expected_hash
+    assert signed.message_hash == expected_hash
     assert signed.v == v
     assert signed.r == r
     assert signed.s == s
@@ -421,14 +418,14 @@ def test_eth_account_sign_transaction(
     assert signed.r == r
     assert signed.s == s
     assert signed.v == v
-    assert signed.rawTransaction == expected_raw_tx
+    assert signed.raw_transaction == expected_raw_tx
     assert signed.hash == tx_hash
 
     account = acct.from_key(private_key)
     assert account.sign_transaction(txn) == signed
 
     expected_sender = acct.from_key(private_key).address
-    assert acct.recover_transaction(signed.rawTransaction) == expected_sender
+    assert acct.recover_transaction(signed.raw_transaction) == expected_sender
 
 
 @pytest.mark.parametrize(
@@ -452,7 +449,7 @@ def test_eth_account_sign_transaction_from_eth_test(acct, transaction_info):
 
     # confirm that signed transaction can be recovered to the sender
     expected_sender = acct.from_key(key).address
-    assert acct.recover_transaction(signed.rawTransaction) == expected_sender
+    assert acct.recover_transaction(signed.raw_transaction) == expected_sender
 
 
 @pytest.mark.parametrize(
@@ -466,7 +463,6 @@ def test_eth_account_recover_transaction_from_eth_test(acct, transaction):
     assert acct.recover_transaction(raw_txn) == expected_sender
 
 
-@pytest.mark.xfail(sys.version_info < (3, 8), reason="Dependencies dropping py<3.8")
 def test_eth_account_encrypt(acct, web3js_key, web3js_password):
     encrypted = acct.encrypt(web3js_key, web3js_password)
 
@@ -478,7 +474,6 @@ def test_eth_account_encrypt(acct, web3js_key, web3js_password):
     assert decrypted_key == to_bytes(hexstr=web3js_key)
 
 
-@pytest.mark.xfail(sys.version_info < (3, 8), reason="Dependencies dropping py<3.8")
 def test_eth_account_prepared_encrypt(acct, web3js_key, web3js_password):
     account = acct.from_key(web3js_key)
     encrypted = account.encrypt(web3js_password)

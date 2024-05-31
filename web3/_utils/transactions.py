@@ -2,6 +2,7 @@ import math
 from typing import (
     TYPE_CHECKING,
     List,
+    Literal,
     Optional,
     Union,
     cast,
@@ -19,15 +20,16 @@ from hexbytes import (
     HexBytes,
 )
 
-from web3._utils.compat import (
-    Literal,
-)
 from web3._utils.utility_methods import (
     all_in_dict,
     any_in_dict,
 )
 from web3.constants import (
     DYNAMIC_FEE_TXN_PARAMS,
+)
+from web3.exceptions import (
+    Web3AttributeError,
+    Web3ValueError,
 )
 from web3.types import (
     BlockIdentifier,
@@ -49,6 +51,8 @@ TX_PARAM_LITERALS = Literal[
     "nonce",
     "chainId",
     "accessList",
+    "maxFeePerBlobGas",
+    "blobVersionedHashes",
 ]
 
 VALID_TRANSACTION_PARAMS: List[TX_PARAM_LITERALS] = [
@@ -64,6 +68,8 @@ VALID_TRANSACTION_PARAMS: List[TX_PARAM_LITERALS] = [
     "data",
     "nonce",
     "chainId",
+    "maxFeePerBlobGas",
+    "blobVersionedHashes",
 ]
 
 TRANSACTION_DEFAULTS = {
@@ -103,7 +109,7 @@ def fill_nonce(w3: "Web3", transaction: TxParams) -> TxParams:
 @curry
 def fill_transaction_defaults(w3: "Web3", transaction: TxParams) -> TxParams:
     """
-    if w3 is None, fill as much as possible while offline
+    If w3 is None, fill as much as possible while offline
     """
     strategy_based_gas_price = w3.eth.generate_gas_price(transaction)
     is_dynamic_fee_transaction = strategy_based_gas_price is None and (
@@ -126,7 +132,7 @@ def fill_transaction_defaults(w3: "Web3", transaction: TxParams) -> TxParams:
 
             if callable(default_getter):
                 if w3 is None:
-                    raise ValueError(
+                    raise Web3ValueError(
                         f"You must specify a '{key}' value in the transaction"
                     )
                 default_val = default_getter(w3, transaction)
@@ -156,7 +162,7 @@ def get_buffered_gas_estimate(
     gas_limit = get_block_gas_limit(w3)
 
     if gas_estimate > gas_limit:
-        raise ValueError(
+        raise Web3ValueError(
             "Contract does not appear to be deployable within the "
             f"current network gas limits.  Estimated: {gas_estimate}. "
             f"Current gas limit: {gas_limit}"
@@ -168,7 +174,7 @@ def get_buffered_gas_estimate(
 def get_required_transaction(w3: "Web3", transaction_hash: _Hash32) -> TxData:
     current_transaction = w3.eth.get_transaction(transaction_hash)
     if not current_transaction:
-        raise ValueError(
+        raise Web3ValueError(
             f"Supplied transaction with hash {transaction_hash!r} does not exist"
         )
     return current_transaction
@@ -200,7 +206,7 @@ def extract_valid_transaction_params(transaction_params: TxData) -> TxParams:
                 msg = 'failure to handle this transaction due to both "input: {}" and'
                 msg += ' "data: {}" are populated. You need to resolve this conflict.'
                 err_vals = (transaction_params["input"], extracted_params["data"])
-                raise AttributeError(msg.format(*err_vals))
+                raise Web3AttributeError(msg.format(*err_vals))
             else:
                 return extracted_params
         else:
@@ -219,7 +225,7 @@ def extract_valid_transaction_params(transaction_params: TxData) -> TxParams:
 def assert_valid_transaction_params(transaction_params: TxParams) -> None:
     for param in transaction_params:
         if param not in VALID_TRANSACTION_PARAMS:
-            raise ValueError(f"{param} is not a valid transaction parameter")
+            raise Web3ValueError(f"{param} is not a valid transaction parameter")
 
 
 def prepare_replacement_transaction(
@@ -229,14 +235,14 @@ def prepare_replacement_transaction(
     gas_multiplier: float = 1.125,
 ) -> TxParams:
     if original_transaction["blockHash"] is not None:
-        raise ValueError(
+        raise Web3ValueError(
             f'Supplied transaction with hash {original_transaction["hash"]!r} '
             "has already been mined"
         )
     if "nonce" in replacement_transaction and (
         replacement_transaction["nonce"] != original_transaction["nonce"]
     ):
-        raise ValueError(
+        raise Web3ValueError(
             "Supplied nonce in new_transaction must match the pending transaction"
         )
 
@@ -255,7 +261,7 @@ def prepare_replacement_transaction(
         and original_transaction["gasPrice"] is not None
     ):
         if replacement_transaction["gasPrice"] <= original_transaction["gasPrice"]:
-            raise ValueError(
+            raise Web3ValueError(
                 "Supplied gas price must exceed existing transaction gas price"
             )
 

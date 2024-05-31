@@ -2,23 +2,30 @@ import os
 import pathlib
 import pytest
 import socket
+import sys
 import tempfile
 from threading import (
     Thread,
 )
 import time
+from unittest.mock import (
+    patch,
+)
 
 from web3.auto.gethdev import (
     w3,
 )
 from web3.exceptions import (
     ProviderConnectionError,
-)
-from web3.middleware import (
-    construct_fixture_middleware,
+    Web3ValueError,
 )
 from web3.providers.ipc import (
     IPCProvider,
+    get_default_ipc_path,
+    get_dev_ipc_path,
+)
+from web3.types import (
+    RPCEndpoint,
 )
 
 
@@ -47,6 +54,82 @@ def test_ipc_tilda_in_path():
     expectedPath = str(pathlib.Path.home()) + "/foo"
     assert IPCProvider("~/foo").ipc_path == expectedPath
     assert IPCProvider(pathlib.Path("~/foo")).ipc_path == expectedPath
+
+
+@pytest.mark.parametrize(
+    "platform, expected_result, expected_error",
+    [
+        ("darwin", "/Library/Ethereum/geth.ipc", None),
+        ("linux", "/.ethereum/geth.ipc", None),
+        ("freebsd", "/.ethereum/geth.ipc", None),
+        ("win32", r"\\.\pipe\geth.ipc", None),
+        (
+            "unknown",
+            None,
+            {
+                "error": Web3ValueError,
+                "match": (
+                    "Unsupported platform 'unknown'. Only darwin/linux/win32/"
+                    "freebsd are supported.  You must specify the ipc_path"
+                ),
+            },
+        ),
+    ],
+)
+def test_get_default_ipc_path(platform, expected_result, expected_error):
+    with patch.object(sys, "platform", platform):
+        if expected_error:
+            with pytest.raises(expected_error["error"], match=expected_error["match"]):
+                get_default_ipc_path()
+        else:
+            assert get_default_ipc_path().endswith(expected_result)
+
+
+@pytest.mark.parametrize(
+    "provider_env_uri",
+    [
+        "/sample/path/to/ipc/geth.ipc",
+        "",
+    ],
+)
+@pytest.mark.parametrize(
+    "platform, expected_result, expected_error",
+    [
+        ("darwin", "/var/path/to/tmp/T/geth.ipc", None),
+        ("linux", "/tmp/geth.ipc", None),
+        ("freebsd", "/tmp/geth.ipc", None),
+        ("win32", r"\\.\pipe\geth.ipc", None),
+        (
+            "unknown",
+            None,
+            {
+                "error": Web3ValueError,
+                "match": (
+                    "Unsupported platform 'unknown'. Only darwin/linux/win32/"
+                    "freebsd are supported.  You must specify the ipc_path"
+                ),
+            },
+        ),
+    ],
+)
+def test_get_dev_ipc_path_(provider_env_uri, platform, expected_result, expected_error):
+    with patch.object(sys, "platform", platform):
+        with patch.dict(
+            os.environ,
+            {
+                "TMPDIR": "/var/path/to/tmp/T/",
+                "WEB3_PROVIDER_URI": provider_env_uri,
+            },
+        ):
+            if provider_env_uri:
+                assert get_dev_ipc_path() == provider_env_uri
+            elif expected_error:
+                with pytest.raises(
+                    expected_error["error"], match=expected_error["match"]
+                ):
+                    get_dev_ipc_path()
+            else:
+                assert get_dev_ipc_path().endswith(expected_result)
 
 
 @pytest.fixture
@@ -90,14 +173,15 @@ def test_sync_waits_for_full_result(jsonrpc_ipc_pipe_path, serve_empty_result):
     provider._socket.sock.close()
 
 
-def test_web3_auto_gethdev():
+def test_web3_auto_gethdev(request_mocker):
     assert isinstance(w3.provider, IPCProvider)
-    return_block_with_long_extra_data = construct_fixture_middleware(
-        {
-            "eth_getBlockByNumber": {"extraData": "0x" + "ff" * 33},
-        }
-    )
-    w3.middleware_onion.inject(return_block_with_long_extra_data, layer=0)
-    block = w3.eth.get_block("latest")
+    with request_mocker(
+        w3,
+        mock_results={
+            RPCEndpoint("eth_getBlockByNumber"): {"extraData": "0x" + "ff" * 33}
+        },
+    ):
+        block = w3.eth.get_block("latest")
+
     assert "extraData" not in block
     assert block.proofOfAuthorityData == b"\xff" * 33

@@ -16,47 +16,52 @@ from web3 import (
     constants,
 )
 from web3.exceptions import (
-    TransactionNotFound,
+    Web3ValueError,
 )
 
 # use same coinbase value as in `web3.py/tests/integration/common.py`
-COINBASE = "0xdc544d1aa88ff8bbd2f2aec754b1f1e99e1812fd"
+COINBASE = "0xdC544d1AA88Ff8bbd2F2AeC754B1F1e99e1812fd"
 COINBASE_PK = "0x58d23b55bc9cdce1f18c2500f40ff4ab7245df9a89505e9b1fa4851f623d241d"
 
+# set up the keyfile account with a known address
+KEYFILE_ACCOUNT_PKEY = (
+    "0x58d23b55bc9cdce1f18c2500f40ff4ab7245df9a89505e9b1fa4851f623d241d"
+)
+KEYFILE_ACCOUNT_ADDRESS = "0xdC544d1AA88Ff8bbd2F2AeC754B1F1e99e1812fd"
 KEYFILE_DATA = '{"address":"dc544d1aa88ff8bbd2f2aec754b1f1e99e1812fd","crypto":{"cipher":"aes-128-ctr","ciphertext":"52e06bc9397ea9fa2f0dae8de2b3e8116e92a2ecca9ad5ff0061d1c449704e98","cipherparams":{"iv":"aa5d0a5370ef65395c1a6607af857124"},"kdf":"scrypt","kdfparams":{"dklen":32,"n":262144,"p":1,"r":8,"salt":"9fdf0764eb3645ffc184e166537f6fe70516bf0e34dc7311dea21f100f0c9263"},"mac":"4e0b51f42b865c15c485f4faefdd1f01a38637e5247f8c75ffe6a8c0eba856f6"},"id":"5a6124e0-10f1-4c1c-ae3e-d903eacb740a","version":3}'  # noqa: E501
 
 KEYFILE_PW = "web3py-test"
+KEYFILE_PW_TXT = "pw.txt"
 KEYFILE_FILENAME = "UTC--2017-08-24T19-42-47.517572178Z--dc544d1aa88ff8bbd2f2aec754b1f1e99e1812fd"  # noqa: E501
 
 RAW_TXN_ACCOUNT = "0x39EEed73fb1D3855E90Cbd42f348b3D7b340aAA6"
-
-UNLOCKABLE_PRIVATE_KEY = (
-    "0x392f63a79b1ff8774845f3fa69de4a13800a59e7083f5187f1558f0797ad0f01"
-)
-UNLOCKABLE_ACCOUNT = "0x12efdc31b1a8fa1a1e756dfd8a1601055c971e13"
-UNLOCKABLE_ACCOUNT_PW = KEYFILE_PW
 
 GENESIS_DATA = {
     "config": {
         "chainId": 131277322940537,  # the string 'web3py' as an integer
         "homesteadBlock": 0,
-        "byzantiumBlock": 0,
-        "constantinopleBlock": 0,
         "eip150Block": 0,
         "eip155Block": 0,
         "eip158Block": 0,
-        "istanbulBlock": 0,
+        "byzantiumBlock": 0,
+        "constantinopleBlock": 0,
         "petersburgBlock": 0,
+        "istanbulBlock": 0,
         "berlinBlock": 0,
         "londonBlock": 0,
         "arrowGlacierBlock": 0,
         "grayGlacierBlock": 0,
         "shanghaiTime": 0,
+        # TODO: Remove this once this bug is fixed. We need to set TTD to -1 and
+        #  `difficulty` to `0` to trick geth into using the correct EVM rules for
+        #  `eth_estimateGas`. See: github.com/ethereum/go-ethereum/issues/29404
+        "terminalTotalDifficulty": -1,
+        "terminalTotalDifficultyPassed": True,
     },
-    "nonce": "0x0000000000000042",
+    "nonce": "0x0",
     "alloc": {
         COINBASE: {"balance": "1000000000000000000000000000"},
-        UNLOCKABLE_ACCOUNT: {"balance": "1000000000000000000000000000"},
+        KEYFILE_ACCOUNT_ADDRESS: {"balance": "1000000000000000000000000000"},
         RAW_TXN_ACCOUNT: {"balance": "1000000000000000000000000000"},
         "0000000000000000000000000000000000000001": {"balance": "1"},
         "0000000000000000000000000000000000000002": {"balance": "1"},
@@ -65,11 +70,11 @@ GENESIS_DATA = {
         "0000000000000000000000000000000000000005": {"balance": "1"},
         "0000000000000000000000000000000000000006": {"balance": "1"},
     },
-    "timestamp": "0x00",
+    "timestamp": "0x0",
     "parentHash": constants.HASH_ZERO,
     "extraData": "0x3535353535353535353535353535353535353535353535353535353535353535",
     "gasLimit": "0x3b9aca00",  # 1,000,000,000
-    "difficulty": "0x10000",
+    "difficulty": 0,
     "mixhash": constants.HASH_ZERO,
     "coinbase": COINBASE,
 }
@@ -143,7 +148,7 @@ def wait_for_socket(ipc_path, timeout=30):
             sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
             sock.connect(ipc_path)
             sock.settimeout(timeout)
-        except (FileNotFoundError, socket.error):
+        except OSError:
             time.sleep(0.01)
         else:
             break
@@ -172,6 +177,9 @@ def get_geth_process(
         geth_binary,
         "--datadir",
         datadir,
+        "--dev",
+        "--dev.period",
+        "1",
         "--ipcpath",
         ipc_path,
         "--nodiscover",
@@ -210,43 +218,21 @@ def mine_block(w3):
     origin_block_number = w3.eth.block_number
 
     start_time = time.time()
-    w3.geth.miner.start(1)
     while time.time() < start_time + 120:
         block_number = w3.eth.block_number
         if block_number > origin_block_number:
-            w3.geth.miner.stop()
             return block_number
         else:
             time.sleep(0.1)
     else:
-        raise ValueError("No block mined during wait period")
-
-
-def mine_transaction_hash(w3, txn_hash):
-    start_time = time.time()
-    w3.geth.miner.start(1)
-    while time.time() < start_time + 120:
-        try:
-            receipt = w3.eth.get_transaction_receipt(txn_hash)
-        except TransactionNotFound:
-            continue
-        if receipt is not None:
-            w3.geth.miner.stop()
-            return receipt
-        else:
-            time.sleep(0.1)
-    else:
-        raise ValueError(
-            "Math contract deploy transaction not mined during wait period"
-        )
+        raise Web3ValueError("No block mined during wait period")
 
 
 def deploy_contract(w3, name, factory):
     name = name.upper()
-    w3.geth.personal.unlock_account(w3.eth.coinbase, KEYFILE_PW)
-    deploy_txn_hash = factory.constructor().transact({"from": w3.eth.coinbase})
+    deploy_txn_hash = factory.constructor().transact({"from": COINBASE})
     print(f"{name}_CONTRACT_DEPLOY_HASH: {deploy_txn_hash}")
-    deploy_receipt = mine_transaction_hash(w3, deploy_txn_hash)
+    deploy_receipt = w3.eth.wait_for_transaction_receipt(deploy_txn_hash)
     print(f"{name}_CONTRACT_DEPLOY_TRANSACTION_MINED")
     contract_address = deploy_receipt["contractAddress"]
     assert is_checksum_address(contract_address)

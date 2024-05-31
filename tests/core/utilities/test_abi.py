@@ -17,6 +17,9 @@ from web3._utils.normalizers import (
     abi_string_to_text,
     addresses_checksummed,
 )
+from web3.exceptions import (
+    Web3ValueError,
+)
 
 
 @pytest.mark.parametrize(
@@ -56,13 +59,9 @@ def test_get_tuple_type_str_parts(input, expected):
     assert get_tuple_type_str_parts(input) == expected
 
 
-MyXYTuple = NamedTuple(
-    "MyXYTuple",
-    [
-        ("x", int),
-        ("y", int),
-    ],
-)
+class MyXYTuple(NamedTuple):
+    x: int
+    y: int
 
 
 TEST_FUNCTION_ABI_JSON = """
@@ -296,9 +295,9 @@ def test_abi_data_tree(types, data, expected):
             ["bool[2]", "int256"],
             [[True, False], 9876543210],
             [
-                lambda typ, dat: (typ, "Tru-dat")
-                if typ == "bool" and dat
-                else (typ, dat),
+                lambda typ, dat: (
+                    (typ, "Tru-dat") if typ == "bool" and dat else (typ, dat)
+                ),
                 lambda typ, dat: (typ, hex(dat)) if typ == "int256" else (typ, dat),
             ],
             [["Tru-dat", False], "0x24cb016ea"],
@@ -356,7 +355,7 @@ def test_map_abi_data(types, data, funcs, expected):
 
 @pytest.mark.parametrize("arg", (6, 7, 9, 12, 20, 30))
 def test_exact_length_bytes_encoder_raises_on_non_multiples_of_8_bit_size(arg):
-    with pytest.raises(ValueError, match="multiple of 8"):
+    with pytest.raises(Web3ValueError, match="multiple of 8"):
         _ = ExactLengthBytesEncoder(None, data_byte_size=2, value_bit_size=arg)
 
 

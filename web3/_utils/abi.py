@@ -51,7 +51,6 @@ from eth_typing import (
     TypeStr,
 )
 from eth_utils import (
-    combomethod,
     decode_hex,
     is_bytes,
     is_list_like,
@@ -81,6 +80,9 @@ from web3._utils.formatters import (
 from web3.exceptions import (
     FallbackNotFound,
     MismatchedABI,
+    Web3AttributeError,
+    Web3TypeError,
+    Web3ValueError,
 )
 from web3.types import (
     ABI,
@@ -188,7 +190,8 @@ def filter_by_argument_name(
     ]
 
 
-class AddressEncoder(encoding.AddressEncoder):
+# type ignored because subclassing encoding.AddressEncoder which has type Any
+class AddressEncoder(encoding.AddressEncoder):  # type: ignore[misc]
     @classmethod
     def validate_value(cls, value: Any) -> None:
         if is_ens_name(value):
@@ -197,7 +200,8 @@ class AddressEncoder(encoding.AddressEncoder):
         super().validate_value(value)
 
 
-class AcceptsHexStrEncoder(encoding.BaseEncoder):
+# type ignored because subclassing encoding.BytesEncoder which has type Any
+class AcceptsHexStrEncoder(encoding.BaseEncoder):  # type: ignore[misc]
     subencoder_cls: Type[encoding.BaseEncoder] = None
     is_strict: bool = None
     is_big_endian: bool = False
@@ -211,11 +215,7 @@ class AcceptsHexStrEncoder(encoding.BaseEncoder):
     ) -> None:
         super().__init__(**kwargs)
         self.subencoder = subencoder
-
-    # type ignored b/c conflict w/ defined BaseEncoder.is_dynamic = False
-    @property
-    def is_dynamic(self) -> bool:  # type: ignore
-        return self.subencoder.is_dynamic
+        self.is_dynamic = subencoder.is_dynamic
 
     @classmethod
     def from_type_str(
@@ -232,15 +232,12 @@ class AcceptsHexStrEncoder(encoding.BaseEncoder):
     @classmethod
     def get_subencoder_class(cls) -> Type[encoding.BaseEncoder]:
         if cls.subencoder_cls is None:
-            raise AttributeError(f"No subencoder class is set. {cls.__name__}")
+            raise Web3AttributeError(f"No subencoder class is set. {cls.__name__}")
         return cls.subencoder_cls
 
-    # type ignored b/c combomethod makes signature conflict
-    # w/ defined BaseEncoder.validate_value()
-    @combomethod
-    def validate_value(self, value: Any) -> None:  # type: ignore
+    def validate_value(self, value: Any) -> None:
         normalized_value = self.validate_and_normalize(value)
-        return self.subencoder.validate_value(normalized_value)
+        self.subencoder.validate_value(normalized_value)
 
     def encode(self, value: Any) -> bytes:
         normalized_value = self.validate_and_normalize(value)
@@ -295,33 +292,28 @@ class ExactLengthBytesEncoder(BytesEncoder):
     def validate(self) -> None:
         super().validate()
         if self.value_bit_size is None:
-            raise ValueError("`value_bit_size` may not be none")
+            raise Web3ValueError("`value_bit_size` may not be none")
         if self.data_byte_size is None:
-            raise ValueError("`data_byte_size` may not be none")
+            raise Web3ValueError("`data_byte_size` may not be none")
         if self.is_big_endian is None:
-            raise ValueError("`is_big_endian` may not be none")
+            raise Web3ValueError("`is_big_endian` may not be none")
 
         if self.value_bit_size % 8 != 0:
-            raise ValueError(
+            raise Web3ValueError(
                 f"Invalid value bit size: {self.value_bit_size}. "
                 "Must be a multiple of 8"
             )
 
         if self.value_bit_size > self.data_byte_size * 8:
-            raise ValueError("Value byte size exceeds data size")
+            raise Web3ValueError("Value byte size exceeds data size")
 
     @parse_type_str("bytes")
-    def from_type_str(cls, abi_type: BasicType, registry: ABIRegistry) -> bytes:
+    def from_type_str(
+        cls, abi_type: BasicType, registry: ABIRegistry
+    ) -> "ExactLengthBytesEncoder":
         subencoder_cls = cls.get_subencoder_class()
-        # cast b/c expects BaseCoder but `from_type_string`
-        # restricted to BaseEncoder subclasses
-        subencoder = cast(
-            encoding.BaseEncoder,
-            subencoder_cls.from_type_str(abi_type.to_type_str(), registry),
-        )
-        # type ignored b/c kwargs are set in superclass init
-        # Unexpected keyword argument "value_bit_size" for "__call__" of "BaseEncoder"
-        return cls(  # type: ignore
+        subencoder = subencoder_cls.from_type_str(abi_type.to_type_str(), registry)
+        return cls(
             subencoder,
             value_bit_size=abi_type.sub * 8,
             data_byte_size=abi_type.sub,
@@ -338,7 +330,8 @@ class StrictByteStringEncoder(AcceptsHexStrEncoder):
     is_strict = True
 
 
-class TextStringEncoder(encoding.TextStringEncoder):
+# type ignored because subclassing encoding.TextStringEncoder which has type Any
+class TextStringEncoder(encoding.TextStringEncoder):  # type: ignore[misc]
     @classmethod
     def validate_value(cls, value: Any) -> None:
         if is_bytes(value):
@@ -405,7 +398,7 @@ def merge_args_and_kwargs(
     """
     # Ensure the function is being applied to the correct number of args
     if len(args) + len(kwargs) != len(function_abi.get("inputs", [])):
-        raise TypeError(
+        raise Web3TypeError(
             f"Incorrect argument count. Expected '{len(function_abi['inputs'])}'"
             f". Got '{len(args) + len(kwargs)}'"
         )
@@ -421,7 +414,7 @@ def merge_args_and_kwargs(
     # Check for duplicate args
     duplicate_args = kwarg_names.intersection(args_as_kwargs.keys())
     if duplicate_args:
-        raise TypeError(
+        raise Web3TypeError(
             f"{function_abi.get('name')}() got multiple values for argument(s) "
             f"'{', '.join(duplicate_args)}'"
         )
@@ -430,11 +423,11 @@ def merge_args_and_kwargs(
     unknown_args = kwarg_names.difference(sorted_arg_names)
     if unknown_args:
         if function_abi.get("name"):
-            raise TypeError(
+            raise Web3TypeError(
                 f"{function_abi.get('name')}() got unexpected keyword argument(s)"
                 f" '{', '.join(unknown_args)}'"
             )
-        raise TypeError(
+        raise Web3TypeError(
             f"Type: '{function_abi.get('type')}' got unexpected keyword argument(s)"
             f" '{', '.join(unknown_args)}'"
         )
@@ -508,7 +501,7 @@ def _align_abi_input(arg_abi: ABIFunctionParams, arg: Any) -> Tuple[Any, ...]:
         aligned_arg = arg
 
     if not is_list_like(aligned_arg):
-        raise TypeError(
+        raise Web3TypeError(
             f'Expected non-string sequence for "{arg_abi.get("type")}" '
             f"component type: got {aligned_arg}"
         )
@@ -539,9 +532,7 @@ def get_aligned_abi_inputs(
         args = tuple(args[abi["name"]] for abi in input_abis)
 
     return (
-        # typed dict cannot be used w/ a normal Dict
-        # https://github.com/python/mypy/issues/4976
-        tuple(collapse_if_tuple(abi) for abi in input_abis),  # type: ignore
+        tuple(collapse_if_tuple(abi) for abi in input_abis),
         type(args)(_align_abi_input(abi, arg) for abi, arg in zip(input_abis, args)),
     )
 
@@ -553,7 +544,7 @@ def get_constructor_abi(contract_abi: ABI) -> ABIFunction:
     elif len(candidates) == 0:
         return None
     elif len(candidates) > 1:
-        raise ValueError("Found multiple constructors.")
+        raise Web3ValueError("Found multiple constructors.")
     return None
 
 
@@ -575,7 +566,7 @@ STATIC_TYPES = list(
 )
 
 BASE_TYPE_REGEX = "|".join(
-    (_type + "(?![a-z0-9])" for _type in itertools.chain(STATIC_TYPES, DYNAMIC_TYPES))
+    _type + "(?![a-z0-9])" for _type in itertools.chain(STATIC_TYPES, DYNAMIC_TYPES)
 )
 
 SUB_TYPE_REGEX = r"\[" "[0-9]*" r"\]"
@@ -641,14 +632,14 @@ END_BRACKETS_OF_ARRAY_TYPE_REGEX = r"\[[^]]*\]$"
 
 def sub_type_of_array_type(abi_type: TypeStr) -> str:
     if not is_array_type(abi_type):
-        raise ValueError(f"Cannot parse subtype of nonarray abi-type: {abi_type}")
+        raise Web3ValueError(f"Cannot parse subtype of nonarray abi-type: {abi_type}")
 
-    return re.sub(END_BRACKETS_OF_ARRAY_TYPE_REGEX, "", abi_type, 1)
+    return re.sub(END_BRACKETS_OF_ARRAY_TYPE_REGEX, "", abi_type, count=1)
 
 
 def length_of_array_type(abi_type: TypeStr) -> int:
     if not is_array_type(abi_type):
-        raise ValueError(f"Cannot parse length of nonarray abi-type: {abi_type}")
+        raise Web3ValueError(f"Cannot parse length of nonarray abi-type: {abi_type}")
 
     inner_brackets = (
         re.search(END_BRACKETS_OF_ARRAY_TYPE_REGEX, abi_type).group(0).strip("[]")
@@ -716,8 +707,8 @@ def map_abi_data(
     data: Sequence[Any],
 ) -> Any:
     """
-    This function will apply normalizers to your data, in the
-    context of the relevant types. Each normalizer is in the format:
+    Applies normalizers to your data, in the context of the relevant types.
+    Each normalizer is in the format:
 
     def normalizer(datatype, data):
         # Conditionally modify data
@@ -783,7 +774,7 @@ def data_tree_map(
 
 class ABITypedData(namedtuple("ABITypedData", "abi_type, data")):
     """
-    This class marks data as having a certain ABI-type.
+    Marks data as having a certain ABI-type.
 
     >>> a1 = ABITypedData(['address', addr1])
     >>> a2 = ABITypedData(['address', addr2])
@@ -1040,7 +1031,6 @@ async def async_map_if_collection(
     Apply an awaitable method to each element of a collection or value of a dictionary.
     If the value is not a collection, return it unmodified.
     """
-
     datatype = type(value)
     if isinstance(value, Mapping):
         return datatype({key: await func(val) for key, val in value.values()})

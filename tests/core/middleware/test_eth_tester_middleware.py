@@ -4,7 +4,6 @@ from unittest.mock import (
 )
 
 from web3.providers.eth_tester.middleware import (
-    async_default_transaction_fields_middleware,
     default_transaction_fields_middleware,
 )
 from web3.types import (
@@ -27,9 +26,7 @@ def test_get_transaction_count_formatters(w3, block_number):
 
 def test_get_block_formatters(w3):
     all_block_keys = BlockData.__annotations__.keys()
-    all_non_poa_block_keys = set(
-        [k for k in all_block_keys if k != "proofOfAuthorityData"]
-    )
+    all_non_poa_block_keys = {k for k in all_block_keys if k != "proofOfAuthorityData"}
 
     latest_block = w3.eth.get_block("latest")
     latest_block_keys = set(latest_block.keys())
@@ -93,9 +90,10 @@ def test_default_transaction_fields_middleware(
     mock_w3.eth.accounts = w3_accounts
     mock_w3.eth.coinbase = w3_coinbase
 
-    middleware = default_transaction_fields_middleware(mock_request, mock_w3)
+    middleware = default_transaction_fields_middleware(mock_w3)
     base_params = {"chainId": 5}
-    filled_transaction = middleware(method, [base_params])
+    inner = middleware.wrap_make_request(mock_request)
+    filled_transaction = inner(method, [base_params])
 
     filled_params = filled_transaction[0]
 
@@ -178,11 +176,10 @@ async def test_async_default_transaction_fields_middleware(
     mock_w3.eth.accounts = mock_async_accounts()
     mock_w3.eth.coinbase = mock_async_coinbase()
 
-    middleware = await async_default_transaction_fields_middleware(
-        mock_request, mock_w3
-    )
+    middleware = default_transaction_fields_middleware(mock_w3)
     base_params = {"chainId": 5}
-    filled_transaction = await middleware(method, [base_params])
+    inner = await middleware.async_wrap_make_request(mock_request)
+    filled_transaction = await inner(method, [base_params])
 
     filled_params = filled_transaction[0]
     assert ("from" in filled_params.keys()) == from_field_added

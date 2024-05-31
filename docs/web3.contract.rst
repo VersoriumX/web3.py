@@ -9,6 +9,27 @@ Smart contracts are programs deployed to the Ethereum network. See the
 `ethereum.org docs <https://ethereum.org/en/developers/docs/smart-contracts>`_
 for a proper introduction.
 
+Interacting with deployed contracts
+-----------------------------------
+
+In order to use an existing contract, you'll need its deployed address and its ABI.
+Both can be found using block explorers, like Etherscan. Once you instantiate a contract
+instance, you can read data and execute transactions.
+
+.. code-block:: python
+
+    # Configure w3, e.g., w3 = Web3(...)
+    address = '0x1f9840a85d5aF5bf1D1762F925BDADdC4201F988'
+    abi = '[{"inputs":[{"internalType":"address","name":"account","type":"address"},{"internalType":"address","name":"minter_","type":"address"},...'
+    contract_instance = w3.eth.contract(address=address, abi=abi)
+
+    # read state:
+    contract_instance.functions.storedValue().call()
+    # 42
+
+    # update state:
+    tx_hash = contract_instance.functions.updateValue(43).transact()
+
 .. _contract_example:
 
 Contract Deployment Example
@@ -38,8 +59,9 @@ After ``py-solc-x`` is installed, you will need to install a version of ``solc``
 You should now be set up to compile and deploy a contract.
 
 The following example runs through these steps:
+
 #. Compile Solidity contract into bytecode and an ABI
-#. Initialize a Contract Web3.py instance
+#. Initialize a Contract instance
 #. Deploy the contract using the Contract instance to initiate a transaction
 #. Interact with the contract functions using the Contract instance
 
@@ -264,12 +286,12 @@ Each Contract Factory exposes the following methods.
 
 .. _contract_create_filter:
 
-.. py:classmethod:: Contract.events.your_event_name.create_filter(fromBlock=None, toBlock="latest", argument_filters={}, topics=[])
+.. py:classmethod:: Contract.events.your_event_name.create_filter(from_block=None, to_block="latest", argument_filters={}, topics=[])
 
     Creates a new event filter, an instance of :py:class:`web3.utils.filters.LogFilter`.
 
-    - ``fromBlock`` is a mandatory field. Defines the starting block (exclusive) filter block range. It can be either the starting block number, or 'latest' for the last mined block, or 'pending' for unmined transactions. In the case of ``fromBlock``, 'latest' and 'pending' set the 'latest' or 'pending' block as a static value for the starting filter block.
-    - ``toBlock`` optional. Defaults to 'latest'. Defines the ending block (inclusive) in the filter block range.  Special values 'latest' and 'pending' set a dynamic range that always includes the 'latest' or 'pending' blocks for the filter's upper block range.
+    - ``from_block`` is a mandatory field. Defines the starting block (exclusive) filter block range. It can be either the starting block number, or 'latest' for the last mined block, or 'pending' for unmined transactions. In the case of ``from_block``, 'latest' and 'pending' set the 'latest' or 'pending' block as a static value for the starting filter block.
+    - ``to_block`` optional. Defaults to 'latest'. Defines the ending block (inclusive) in the filter block range.  Special values 'latest' and 'pending' set a dynamic range that always includes the 'latest' or 'pending' blocks for the filter's upper block range.
     - ``address`` optional. Defaults to the contract address. The filter matches the event logs emanating from ``address``.
     - ``argument_filters``, optional. Expects a dictionary of argument names and values. When provided event logs are filtered for the event argument values. Event arguments can be both indexed or unindexed. Indexed values will be translated to their corresponding topic arguments. Unindexed arguments will be filtered using a regular expression.
     - ``topics`` optional, accepts the standard JSON-RPC topics argument.  See the JSON-RPC documentation for `eth_newFilter <https://github.com/ethereum/wiki/wiki/JSON-RPC#eth_newfilter>`_ more information on the ``topics`` parameters.
@@ -281,7 +303,7 @@ Each Contract Factory exposes the following methods.
     .. code-block:: python
 
         filter_builder = myContract.events.myEvent.build_filter()
-        filter_builder.fromBlock = "latest"
+        filter_builder.from_block = "latest"
         filter_builder.args.clientID.match_any(1, 2, 3, 4)
         filter_builder.args.region.match_single("UK")
         filter_instance = filter_builder.deploy()
@@ -297,21 +319,21 @@ Each Contract Factory exposes the following methods.
 
     .. code-block:: python
 
-        filter_builder = myContract.events.myEvent.build_filter()
-        filter_builder.fromBlock = "latest"
-        filter_builder.fromBlock = 0  # raises a ValueError
+        filter_builder = my_contract.events.myEvent.build_filter()
+        filter_builder.from_block = "latest"
+        filter_builder.from_block = 0  # raises a ValueError
 
+.. py:classmethod:: Contract.encode_abi(fn_name, args=None, kwargs=None, data=None)
 
-.. py:classmethod:: Contract.encodeABI(fn_name, args=None, kwargs=None, data=None)
+    Encodes the arguments using the Ethereum ABI for the contract function that
+    matches the given ``fn_name`` and arguments ``args``. The ``data`` parameter
+    defaults to the function selector.
 
-   Encodes the arguments using the Ethereum ABI for the contract function that
-   matches the given ``fn_name`` and arguments ``args``. The ``data`` parameter
-   defaults to the function selector.
+    .. code-block:: python
 
-   .. code-block:: python
-
-      >>> contract.encodeABI(fn_name="register", args=["rainbows", 10])
+      >>> contract.encode_abi(fn_name="register", args=["rainbows", 10])
       "0xea87152b0000000000000000000000000000000000000000000000000000000000000040000000000000000000000000000000000000000000000000000000000000000a00000000000000000000000000000000000000000000000000000000000000087261696e626f7773000000000000000000000000000000000000000000000000"
+
 
 .. py:classmethod:: Contract.all_functions()
 
@@ -327,7 +349,7 @@ Each Contract Factory exposes the following methods.
 .. py:classmethod:: Contract.get_function_by_signature(signature)
 
     Searches for a distinct function with matching signature. Returns an instance of
-    :py:class:`ContractFunction` upon finding a match. Raises ``ValueError`` if no
+    :py:class:`ContractFunction` upon finding a match. Raises ``Web3ValueError`` if no
     match is found.
 
     .. code-block:: python
@@ -351,7 +373,7 @@ Each Contract Factory exposes the following methods.
 .. py:classmethod:: Contract.get_function_by_name(name)
 
     Searches for a distinct function with matching name. Returns an instance of
-    :py:class:`ContractFunction` upon finding a match. Raises ``ValueError`` if no
+    :py:class:`ContractFunction` upon finding a match. Raises ``Web3ValueError`` if no
     match is found or if multiple matches are found.
 
     .. code-block:: python
@@ -365,7 +387,7 @@ Each Contract Factory exposes the following methods.
     Searches for a distinct function with matching selector.
     The selector can be a hexadecimal string, bytes or int.
     Returns an instance of :py:class:`ContractFunction` upon finding a match.
-    Raises ``ValueError`` if no match is found.
+    Raises ``Web3ValueError`` if no match is found.
 
     .. code-block:: python
 
@@ -413,37 +435,6 @@ Each Contract Factory exposes the following methods.
     eg. ``blockHashAddendsInexpansible(uint256)`` and ``blockHashAskewLimitary(uint256)`` have the
     same selector value equal to ``0x00000000``. A contract containing both of these functions
     will be rejected.
-
-
-.. _ambiguous-contract-functions:
-
-Invoke Ambiguous Contract Functions Example
--------------------------------------------
-
-Below is an example of a contract that has multiple functions of the same name,
-and the arguments are ambiguous.
-
-.. code-block:: python
-
-        >>> contract_source_code = """
-        pragma solidity ^0.4.21;
-        contract AmbiguousDuo {
-          function identity(uint256 input, bool uselessFlag) returns (uint256) {
-            return input;
-          }
-          function identity(int256 input, bool uselessFlag) returns (int256) {
-            return input;
-          }
-        }
-        """
-        # fast forward all the steps of compiling and deploying the contract.
-        >>> ambiguous_contract.functions.identity(1, True) # raises Web3ValidationError
-
-        >>> identity_func = ambiguous_contract.get_function_by_signature('identity(uint256,bool)')
-        >>> identity_func(1, True)
-        <Function identity(uint256,bool) bound to (1, True)>
-        >>> identity_func(1, True).call()
-        1
 
 
 .. _disable-strict-byte-check:
@@ -939,10 +930,12 @@ For example:
 
 .. _contract_get_logs:
 
-.. py:method:: ContractEvents.myEvent(*args, **kwargs).get_logs(fromBlock=None, toBlock="latest", block_hash=None, argument_filters={})
+.. py:method:: ContractEvents.myEvent(*args, **kwargs).get_logs(from_block=None, to_block="latest", block_hash=None, argument_filters={})
    :noindex:
 
    Fetches all logs for a given event within the specified block range or block hash.
+
+   Returns a list of decoded event logs sorted by ``logIndex``.
 
     ``argument_filters`` is an optional dictionary argument that can be used to filter
     for logs where the event's argument values match the values provided in the
@@ -955,14 +948,14 @@ For example:
 
     .. code-block:: python
 
-        myContract = web3.eth.contract(address=contract_address, abi=contract_abi)
+        my_contract = web3.eth.contract(address=contract_address, abi=contract_abi)
 
         # get ``myEvent`` logs from block 1337 to block 2337 where the value for the
         # event argument "eventArg1" is either 1, 2, or 3
-        myContract.events.myEvent().get_logs(
+        my_contract.events.myEvent().get_logs(
             argument_filters={"eventArg1": [1, 2, 3]},
-            fromBlock=1337,
-            toBlock=2337,
+            from_block=1337,
+            to_block=2337,
         )
 
 .. _process_receipt:
@@ -1105,7 +1098,7 @@ Event Log Object
 
 .. doctest:: create_filter
 
-    >>> transfer_filter = my_token_contract.events.Transfer.create_filter(fromBlock="0x0", argument_filters={'from': '0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf'})
+    >>> transfer_filter = my_token_contract.events.Transfer.create_filter(from_block="0x0", argument_filters={'from': '0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf'})
     >>> transfer_filter.get_new_entries()
     [AttributeDict({'args': AttributeDict({'from': '0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf',
      'to': '0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf',
@@ -1238,11 +1231,161 @@ will be used to find the contract function by signature,
 and forwarded to the contract function when applicable.
 
 
-Contract FAQs
--------------
+Examples
+--------
 
-How do I pass in a struct as a function argument?
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Working with an ERC-20 Token Contract
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Most fungible tokens on the Ethereum blockchain conform to the `ERC-20`_
+standard.  This section of the guide covers interacting with an existing token
+contract which conforms to this standard.
+
+.. testsetup::
+
+    from web3 import Web3
+    from hexbytes import HexBytes
+    w3 = Web3(Web3.EthereumTesterProvider())
+    bytecode = '6060604052341561000c57fe5b604051602080610acb833981016040528080519060200190919050505b620f42408114151561003b5760006000fd5b670de0b6b3a76400008102600281905550600254600060003373ffffffffffffffffffffffffffffffffffffffff1673ffffffffffffffffffffffffffffffffffffffff168152602001908152602001600020819055505b505b610a27806100a46000396000f30060606040523615610097576000357c0100000000000000000000000000000000000000000000000000000000900463ffffffff16806306fdde0314610099578063095ea7b31461013257806318160ddd1461018957806323b872dd146101af578063313ce5671461022557806370a082311461025157806395d89b411461029b578063a9059cbb14610334578063dd62ed3e1461038b575bfe5b34156100a157fe5b6100a96103f4565b60405180806020018281038252838181518152602001915080519060200190808383600083146100f8575b8051825260208311156100f8576020820191506020810190506020830392506100d4565b505050905090810190601f1680156101245780820380516001836020036101000a031916815260200191505b509250505060405180910390f35b341561013a57fe5b61016f600480803573ffffffffffffffffffffffffffffffffffffffff1690602001909190803590602001909190505061042e565b604051808215151515815260200191505060405180910390f35b341561019157fe5b610199610521565b6040518082815260200191505060405180910390f35b34156101b757fe5b61020b600480803573ffffffffffffffffffffffffffffffffffffffff1690602001909190803573ffffffffffffffffffffffffffffffffffffffff16906020019091908035906020019091905050610527565b604051808215151515815260200191505060405180910390f35b341561022d57fe5b610235610791565b604051808260ff1660ff16815260200191505060405180910390f35b341561025957fe5b610285600480803573ffffffffffffffffffffffffffffffffffffffff16906020019091905050610796565b6040518082815260200191505060405180910390f35b34156102a357fe5b6102ab6107e0565b60405180806020018281038252838181518152602001915080519060200190808383600083146102fa575b8051825260208311156102fa576020820191506020810190506020830392506102d6565b505050905090810190601f1680156103265780820380516001836020036101000a031916815260200191505b509250505060405180910390f35b341561033c57fe5b610371600480803573ffffffffffffffffffffffffffffffffffffffff1690602001909190803590602001909190505061081a565b604051808215151515815260200191505060405180910390f35b341561039357fe5b6103de600480803573ffffffffffffffffffffffffffffffffffffffff1690602001909190803573ffffffffffffffffffffffffffffffffffffffff16906020019091905050610973565b6040518082815260200191505060405180910390f35b604060405190810160405280600981526020017f54657374546f6b656e000000000000000000000000000000000000000000000081525081565b600081600160003373ffffffffffffffffffffffffffffffffffffffff1673ffffffffffffffffffffffffffffffffffffffff16815260200190815260200160002060008573ffffffffffffffffffffffffffffffffffffffff1673ffffffffffffffffffffffffffffffffffffffff168152602001908152602001600020819055508273ffffffffffffffffffffffffffffffffffffffff163373ffffffffffffffffffffffffffffffffffffffff167f8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925846040518082815260200191505060405180910390a3600190505b92915050565b60025481565b600081600060008673ffffffffffffffffffffffffffffffffffffffff1673ffffffffffffffffffffffffffffffffffffffff1681526020019081526020016000205410806105f1575081600160008673ffffffffffffffffffffffffffffffffffffffff1673ffffffffffffffffffffffffffffffffffffffff16815260200190815260200160002060003373ffffffffffffffffffffffffffffffffffffffff1673ffffffffffffffffffffffffffffffffffffffff16815260200190815260200160002054105b156105fc5760006000fd5b81600060008573ffffffffffffffffffffffffffffffffffffffff1673ffffffffffffffffffffffffffffffffffffffff1681526020019081526020016000206000828254019250508190555081600060008673ffffffffffffffffffffffffffffffffffffffff1673ffffffffffffffffffffffffffffffffffffffff1681526020019081526020016000206000828254039250508190555081600160008673ffffffffffffffffffffffffffffffffffffffff1673ffffffffffffffffffffffffffffffffffffffff16815260200190815260200160002060003373ffffffffffffffffffffffffffffffffffffffff1673ffffffffffffffffffffffffffffffffffffffff168152602001908152602001600020600082825403925050819055508273ffffffffffffffffffffffffffffffffffffffff168473ffffffffffffffffffffffffffffffffffffffff167fddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef846040518082815260200191505060405180910390a3600190505b9392505050565b601281565b6000600060008373ffffffffffffffffffffffffffffffffffffffff1673ffffffffffffffffffffffffffffffffffffffff1681526020019081526020016000205490505b919050565b604060405190810160405280600481526020017f544553540000000000000000000000000000000000000000000000000000000081525081565b600081600060003373ffffffffffffffffffffffffffffffffffffffff1673ffffffffffffffffffffffffffffffffffffffff1681526020019081526020016000205410156108695760006000fd5b81600060003373ffffffffffffffffffffffffffffffffffffffff1673ffffffffffffffffffffffffffffffffffffffff1681526020019081526020016000206000828254039250508190555081600060008573ffffffffffffffffffffffffffffffffffffffff1673ffffffffffffffffffffffffffffffffffffffff168152602001908152602001600020600082825401925050819055508273ffffffffffffffffffffffffffffffffffffffff163373ffffffffffffffffffffffffffffffffffffffff167fddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef846040518082815260200191505060405180910390a3600190505b92915050565b6000600160008473ffffffffffffffffffffffffffffffffffffffff1673ffffffffffffffffffffffffffffffffffffffff16815260200190815260200160002060008373ffffffffffffffffffffffffffffffffffffffff1673ffffffffffffffffffffffffffffffffffffffff1681526020019081526020016000205490505b929150505600a165627a7a723058205071371ee2a4a1be3c96e77d939cdc26161a256fdd638efc08bd33dfc65d3b850029'
+    ABI = '[{"constant":true,"inputs":[],"name":"name","outputs":[{"name":"","type":"string"}],"payable":false,"type":"function","stateMutability":"view"},{"constant":false,"inputs":[{"name":"_spender","type":"address"},{"name":"_value","type":"uint256"}],"name":"approve","outputs":[{"name":"","type":"bool"}],"payable":false,"type":"function","stateMutability":"nonpayable"},{"constant":true,"inputs":[],"name":"totalSupply","outputs":[{"name":"","type":"uint256"}],"payable":false,"type":"function","stateMutability":"view"},{"constant":false,"inputs":[{"name":"_from","type":"address"},{"name":"_to","type":"address"},{"name":"_value","type":"uint256"}],"name":"transferFrom","outputs":[{"name":"","type":"bool"}],"payable":false,"type":"function","stateMutability":"nonpayable"},{"constant":true,"inputs":[],"name":"decimals","outputs":[{"name":"","type":"uint8"}],"payable":false,"type":"function","stateMutability":"view"},{"constant":true,"inputs":[{"name":"_owner","type":"address"}],"name":"balanceOf","outputs":[{"name":"","type":"uint256"}],"payable":false,"type":"function","stateMutability":"view"},{"constant":true,"inputs":[],"name":"symbol","outputs":[{"name":"","type":"string"}],"payable":false,"type":"function","stateMutability":"view"},{"constant":false,"inputs":[{"name":"_to","type":"address"},{"name":"_value","type":"uint256"}],"name":"transfer","outputs":[{"name":"","type":"bool"}],"payable":false,"type":"function","stateMutability":"nonpayable"},{"constant":true,"inputs":[{"name":"_owner","type":"address"},{"name":"_spender","type":"address"}],"name":"allowance","outputs":[{"name":"","type":"uint256"}],"payable":false,"type":"function","stateMutability":"view"},{"inputs":[{"name":"_totalSupply","type":"uint256"}],"payable":false,"type":"constructor","stateMutability":"nonpayable"},{"anonymous":false,"inputs":[{"indexed":true,"name":"from","type":"address"},{"indexed":true,"name":"to","type":"address"},{"indexed":false,"name":"value","type":"uint256"}],"name":"Transfer","type":"event"},{"anonymous":false,"inputs":[{"indexed":true,"name":"owner","type":"address"},{"indexed":true,"name":"spender","type":"address"},{"indexed":false,"name":"value","type":"uint256"}],"name":"Approval","type":"event"}]'
+    factory = w3.eth.contract(abi=ABI, bytecode=bytecode)
+    alice, bob = w3.eth.accounts[0], w3.eth.accounts[1]
+    assert alice == '0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf', alice
+    assert bob == '0x2B5AD5c4795c026514f8317c7a215E218DcCD6cF', bob
+    tx_hash = factory.constructor(1000000).transact({'from': alice, 'gas': 899000, 'gasPrice': Web3.to_wei(1, 'gwei')})
+    assert tx_hash == HexBytes('0x49e3da72a95e4074a9eaea7b438c73ca154627d317e58abeae914e3769a15044'), tx_hash
+    txn_receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
+    assert txn_receipt['contractAddress'] == '0xF2E246BB76DF876Cef8b38ae84130F4F55De395b', txn_receipt['contractAddress']
+    contract_address = txn_receipt['contractAddress']
+    contract = w3.eth.contract(contract_address, abi=ABI)
+    total_supply = contract.functions.totalSupply().call()
+    decimals = 10 ** 18
+    assert total_supply == 1000000 * decimals, total_supply
+
+
+In this guide we will interact with an existing token contract that we have
+already deployed to a local testing chain.  This guide assumes:
+
+1. An existing token contract at a known address.
+2. Access to the proper ``ABI`` for the given contract.
+3. A ``web3.main.Web3`` instance connected to a provider with an unlocked account which can send transactions.
+
+
+Creating the contract factory
+`````````````````````````````
+
+First we need to create a contract instance with the address of our token
+contract and the ``ERC-20`` ABI.
+
+.. doctest::
+
+    >>> contract = w3.eth.contract(contract_address, abi=ABI)
+    >>> contract.address
+    '0xF2E246BB76DF876Cef8b38ae84130F4F55De395b'
+
+
+Querying token metadata
+```````````````````````
+
+Each token will have a total supply which represents the total number of tokens
+in circulation.  In this example we've initialized the token contract to have 1
+million tokens.  Since this token contract is setup to have 18 decimal places,
+the raw total supply returned by the contract is going to have 18 additional
+decimal places.
+
+.. doctest::
+
+    >>> contract.functions.name().call()
+    'TestToken'
+    >>> contract.functions.symbol().call()
+    'TEST'
+    >>> decimals = contract.functions.decimals().call()
+    >>> decimals
+    18
+    >>> DECIMALS = 10 ** decimals
+    >>> contract.functions.totalSupply().call() // DECIMALS
+    1000000
+
+
+Query account balances
+``````````````````````
+
+Next we can query some account balances using the contract's ``balanceOf``
+function.  The token contract we are using starts with a single account which
+we'll refer to as ``alice`` holding all of the tokens.
+
+.. doctest::
+
+    >>> alice = '0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf'
+    >>> bob = '0x2B5AD5c4795c026514f8317c7a215E218DcCD6cF'
+    >>> raw_balance = contract.functions.balanceOf(alice).call()
+    >>> raw_balance
+    1000000000000000000000000
+    >>> raw_balance // DECIMALS
+    1000000
+    >>> contract.functions.balanceOf(bob).call()
+    0
+
+
+Sending tokens
+``````````````
+
+Next we can transfer some tokens from ``alice`` to ``bob`` using the contract's
+``transfer`` function.
+
+
+.. doctest::
+
+    >>> tx_hash = contract.functions.transfer(bob, 100).transact({'from': alice})
+    >>> tx_receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
+    >>> contract.functions.balanceOf(alice).call()
+    999999999999999999999900
+    >>> contract.functions.balanceOf(bob).call()
+    100
+
+
+Creating an approval for external transfers
+```````````````````````````````````````````
+
+Alice could also *approve* someone else to spend tokens from her account using
+the ``approve`` function.  We can also query how many tokens we're approved to
+spend using the ``allowance`` function.
+
+.. doctest::
+
+    >>> contract.functions.allowance(alice, bob).call()
+    0
+    >>> tx_hash = contract.functions.approve(bob, 200).transact({'from': alice})
+    >>> tx_receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
+    >>> contract.functions.allowance(alice, bob).call()
+    200
+
+
+Performing an external transfer
+```````````````````````````````
+
+When someone has an allowance they can transfer those tokens using the
+``transferFrom`` function.
+
+.. doctest::
+
+    >>> contract.functions.allowance(alice, bob).call()
+    200
+    >>> contract.functions.balanceOf(bob).call()
+    100
+    >>> tx_hash = contract.functions.transferFrom(alice, bob, 75).transact({'from': bob})
+    >>> tx_receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
+    >>> contract.functions.allowance(alice, bob).call()
+    125
+    >>> contract.functions.balanceOf(bob).call()
+    175
+
+
+.. _ERC-20: https://github.com/ethereum/ERCs/blob/master/ERCS/erc-20.md
+
+
+Using a struct as a function argument
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 web3.py accepts struct arguments as dictionaries. This format also supports nested structs.
 Let's take a look at a quick example. Given the following Solidity contract:
@@ -1277,7 +1420,7 @@ Let's take a look at a quick example. Given the following Solidity contract:
      }
    }
 
-You can interact with web3.py contract API as follows:
+You can interact with the web3.py contract API as follows:
 
 .. code-block:: python
 
@@ -1292,7 +1435,93 @@ You can interact with web3.py contract API as follows:
    '0x0000000000000000000000000000000000000002'
 
 
-Where can I find more information about Ethereum Contracts?
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+.. _ambiguous-contract-functions:
 
-Comprehensive documentation for Contracts is available from the `Solidity Docs <https://docs.soliditylang.org/>`_.
+Invoke Ambiguous Contract Functions
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Below is an example of a contract that has multiple functions of the same name,
+and the arguments are ambiguous. You can use the :meth:`Contract.get_function_by_signature`
+method to reference the intended function and call it with the correct arguments.
+
+.. code-block:: python
+
+        >>> contract_source_code = """
+        pragma solidity ^0.8.24;
+        contract AmbiguousDuo {
+          function identity(uint256 input, bool uselessFlag) public pure returns (uint256) {
+            return input;
+          }
+          function identity(int256 input, bool uselessFlag) public pure returns (int256) {
+            return input;
+          }
+        }
+        """
+        # fast forward all the steps of compiling and deploying the contract.
+        >>> ambiguous_contract.functions.identity(1, True) # raises Web3ValidationError
+
+        >>> identity_func = ambiguous_contract.get_function_by_signature('identity(uint256,bool)')
+        >>> identity_func(1, True)
+        <Function identity(uint256,bool) bound to (1, True)>
+        >>> identity_func(1, True).call()
+        1
+
+
+.. _ccip-read-example:
+
+CCIP Read support for offchain lookup
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Contract calls support CCIP Read by default, via a ``ccip_read_enabled`` flag on the call and, more globally, a
+``global_ccip_read_enabled`` flag on the provider. The following should work by default without raising an
+``OffchainLookup`` and instead handling it appropriately as per the specification outlined in
+`EIP-3668 <https://eips.ethereum.org/EIPS/eip-3668>`_.
+
+.. code-block:: python
+
+    myContract.functions.revertsWithOffchainLookup(myData).call()
+
+If the offchain lookup requires the user to send a transaction rather than make a call, this may be handled
+appropriately in the following way:
+
+.. code-block:: python
+
+    from web3 import Web3, WebSocketProvider
+    from web3.utils import handle_offchain_lookup
+
+    w3 = Web3(WebSocketProvider(...))
+
+    myContract = w3.eth.contract(address=...)
+    myData = b'data for offchain lookup function call'
+
+    # preflight with an `eth_call` and handle the exception
+    try:
+        myContract.functions.revertsWithOffchainLookup(myData).call(ccip_read_enabled=False)
+    except OffchainLookup as ocl:
+        tx = {'to': myContract.address, 'from': my_account}
+        data_for_callback_function = handle_offchain_lookup(ocl.payload)
+        tx['data'] = data_for_callback_function
+
+        # send the built transaction with `eth_sendTransaction` or sign and send with `eth_sendRawTransaction`
+        tx_hash = w3.eth.send_transaction(tx)
+
+Contract Unit Tests in Python
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Here is an example of how one can use the `pytest`_ framework in python, web3.py,
+eth-tester, and PyEVM to perform unit tests entirely in python without any
+additional need for a full featured ethereum node/client. To install needed
+dependencies you can use the pinned extra for eth_tester in web3 and pytest:
+
+.. _pytest: https://docs.pytest.org/en/latest/
+
+.. code-block:: bash
+
+    $ pip install web3[tester] pytest
+
+Once you have an environment set up for testing, you can then write your tests
+like so:
+
+.. include::  ../tests/core/contracts/test_contract_example.py
+    :code: python
+    :start-line: 1

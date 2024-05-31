@@ -1,15 +1,9 @@
+.. _web3-eth:
+
 web3.eth API
 ============
 
 .. py:module:: web3.eth
-
-.. warning:: Whoa there, Binance Smart Chain user! web3.py is an Ethereum-specific library,
-  which now defaults to "type 2" transactions as of the London network upgrade. BSC apparently
-  does not support these newer transaction types.
-
-  From issues opened, it seems BSC transactions must include ``gasPrice``, but not ``type``,
-  ``maxFeePerGas``, or ``maxPriorityFeePerGas``. If you have trouble beyond that, please find an
-  appropriate BSC forum to raise your question.
 
 .. py:class:: Eth
 
@@ -39,12 +33,13 @@ you can find the latest block number in these two ways:
         Traceback # ... etc ...
         TypeError: This data is immutable -- create a copy instead of modifying
 
-This feature is available via the ``attrdict_middleware`` which is a default middleware.
+This feature is available via the ``AttributeDictMiddleware`` which is a default
+middleware.
 
 .. note::
     Accessing an ``AttributeDict`` property via attribute will break type hinting. If
     typing is crucial for your application, accessing via key / value, as well as
-    removing the ``attrdict_middleware`` altogether, may be desired.
+    removing the ``AttributeDictMiddleware`` altogether, may be desired.
 
 
 Properties
@@ -170,18 +165,6 @@ The following properties are available on the ``web3.eth`` namespace.
         2206939
 
 
-.. py:attribute:: Eth.protocol_version
-
-    * Delegates to ``eth_protocolVersion`` RPC Method
-
-    Returns the id of the current Ethereum protocol version.
-
-    .. code-block:: python
-
-       >>> web3.eth.protocol_version
-       '63'
-
-
 .. py:attribute:: Eth.chain_id
 
     * Delegates to ``eth_chainId`` RPC Method
@@ -195,17 +178,16 @@ The following properties are available on the ``web3.eth`` namespace.
 
    .. note::
 
-      This property gets called frequently in validation middleware,
-      but `chain_id` is added to the ``simple_cache_middleware`` by default.
-      Add the :meth:`simple_cache_middleware<web3.middleware.construct_simple_cache_middleware>`
-      to the ``middleware_onion`` to increase performance:
+      This property gets called frequently in validation middleware, but `eth_chainId`
+      is an allowed method for caching by default. Simply turn on request caching to
+      avoid repeated calls to this method.
 
        .. code-block:: python
 
-          >>> from web3.middleware import simple_cache_middleware
-          >>> w3.middleware_onion.add(simple_cache_middleware)
+          >>> w3.provider.cache_allowed_requests = True
 
 
+.. _web3-eth-methods:
 
 Methods
 -------
@@ -632,17 +614,17 @@ The following methods are available on the ``web3.eth`` namespace.
         # ...
         # Then when the transaction is added to a block, its receipt is returned:
         AttributeDict({
-            'blockHash': '0x4e3a3754410177e6937ef1f84bba68ea139e8d1a2258c5f85db9f1cd715a1bdd',
+            'blockHash': HexBytes('0x4e3a3754410177e6937ef1f84bba68ea139e8d1a2258c5f85db9f1cd715a1bdd'),
             'blockNumber': 46147,
             'contractAddress': None,
             'cumulativeGasUsed': 21000,
             'from': '0xA1E4380A3B1f749673E270229993eE55F35663b4',
             'gasUsed': 21000,
             'logs': [],
-            'logsBloom': '0x000000000000000000000000000000000000000000000000...0000',
+            'logsBloom': HexBytes('0x000000000000000000000000000000000000000000000000...0000'),
             'status': 1,
             'to': '0x5DF9B87991262F6BA471F09758CDE1c0FC1De734',
-            'transactionHash': '0x5c504ed432cb51138bcf09aa5e8a410dd4a1e204ef84bfed1be16dfba1b22060',
+            'transactionHash': HexBytes('0x5c504ed432cb51138bcf09aa5e8a410dd4a1e204ef84bfed1be16dfba1b22060'),
             'transactionIndex': 0,
         })
 
@@ -809,7 +791,7 @@ The following methods are available on the ``web3.eth`` namespace.
           ),
           private_key_for_senders_account,
         )
-        >>> w3.eth.send_raw_transaction(signed_txn.rawTransaction)
+        >>> w3.eth.send_raw_transaction(signed_txn.raw_transaction)
         HexBytes('0xe670ec64341771606e55d6b4ca35a1a6b75ee3d5145a99d05921026d1527331')
 
 
@@ -928,11 +910,11 @@ The following methods are available on the ``web3.eth`` namespace.
 .. py:method:: Eth.sign_typed_data(account, jsonMessage)
 
     * Delegates to ``eth_signTypedData`` RPC Method
-      
+
     .. note::
-    
+
         ``eth_signTypedData`` is not currently supported by any major client (Besu, Erigon, Geth, or Nethermind)
-        
+
     Please note that the ``jsonMessage`` argument is the loaded JSON Object
     and **NOT** the JSON String itself.
 
@@ -1004,23 +986,31 @@ The following methods are available on the ``web3.eth`` namespace.
 
     .. code-block:: python
 
-        >>> w3.eth.create_access_list({'from': '0x0', 'data': '0x0', 'type': '0x1'})
-        {
-            'accessList': (
-                {
-                    'address': '0xde0b295669a9fd93d5f28d9ec85e40f4cb697bae',
-                    'storageKeys': (
-                        '0x0000000000000000000000000000000000000000000000000000000000000003',
-                        '0x0000000000000000000000000000000000000000000000000000000000000007',
-                    )
-                },
-                {
-                    'address': '0xbb9bc244d798123fde783fcc1c72d3bb8c189413',
-                    'storageKeys': ()
-                },
-            ),
-            "gas": "21000"
-        }
+        >>> w3.eth.create_access_list(
+        ...     {
+        ...         "to": to_checksum_address("0xF0109fC8DF283027b6285cc889F5aA624EaC1F55"),
+        ...         "gasPrice": 10**11,
+        ...         "value": 0,
+        ...         "data": "0x608060806080608155",
+        ...     },
+        ...     "pending",
+        ... )
+        AttributeDict({
+            'accessList': [
+                AttributeDict({
+                    'address': '0xde0B295669a9FD93d5F28D9Ec85E40f4cb697BAe',
+                    'storageKeys': [
+                        HexBytes('0x0000000000000000000000000000000000000000000000000000000000000003'),
+                        HexBytes('0x0000000000000000000000000000000000000000000000000000000000000007'),
+                    ]
+                }),
+                AttributeDict({
+                    'address': '0xBB9bc244D798123fDe783fCc1C72d3Bb8C189413',
+                    'storageKeys': []
+                }),
+            ],
+            "gasUsed": 21000
+        })
 
     The method ``eth_createAccessList`` returns a list of addresses and storage keys used by the transaction, plus the gas
     consumed when the ``accessList`` is included. Like ``eth_estimateGas``, this is an estimation; the list could change when
@@ -1065,7 +1055,7 @@ The following methods are available on the ``web3.eth`` namespace.
         })
 
 
-.. py:method:: Eth.estimate_gas(transaction, block_identifier=None)
+.. py:method:: Eth.estimate_gas(transaction, block_identifier=None, state_override=None)
 
     * Delegates to ``eth_estimateGas`` RPC Method
 
@@ -1075,6 +1065,10 @@ The following methods are available on the ``web3.eth`` namespace.
 
     The ``transaction`` and ``block_identifier`` parameters are handled in the
     same manner as the :meth:`~web3.eth.Eth.send_transaction()` method.
+
+    The ``state_override`` is useful when there is a chain of transaction calls.
+    It overrides state so that the gas estimate of a transaction is accurate in
+    cases where prior calls produce side effects.
 
     .. code-block:: python
 
@@ -1104,6 +1098,42 @@ The following methods are available on the ``web3.eth`` namespace.
 
     Set the selected gas price strategy. It must be a method of the signature
     ``(web3, transaction_params)`` and return a gas price denominated in wei.
+
+
+.. py:method:: Eth.subscribe(subscription_identifier, subscription_params)
+
+      * Delegates to ``eth_subscribe`` RPC Method
+
+      Only available on persistent connection providers:
+      :class:`~web3.providers.persistent.WebSocketProvider` and
+      :class:`~web3.providers.persistent.AsyncIPCProvider`.
+
+      Returns a subscription ID that can be used to track a particular subscription to, or unsubscribe from, an event.
+      For usage examples see the docs on :ref:`subscription-examples`.
+
+      .. code-block:: python
+
+          >>> subscription_id = await web3.eth.subscribe('newHeaders')
+          >>> subscription_id
+          '0xbd63bb89e7475591a0a6fc9014307bc4'
+
+
+.. py:method:: Eth.unsubscribe(subscription_id)
+
+      * Delegates to ``eth_unsubscribe`` RPC Method
+
+      Only available on persistent connection providers:
+      :class:`~web3.providers.persistent.WebSocketProvider` and
+      :class:`~web3.providers.persistent.AsyncIPCProvider`.
+
+      Returns ``True`` if successfully unsubscribed. For usage examples see the docs on
+      :ref:`subscription-examples`.
+
+      .. code-block:: python
+
+          >>> result = await web3.eth.unsubscribe(subscription_id)
+          >>> result
+          True
 
 
 Filters
@@ -1138,7 +1168,8 @@ with the filtering API.
     callbacks which will be called with each result of the filter.
 
     When creating a new log filter, the ``filter_params`` should be a
-    dictionary with the following keys.
+    dictionary with the following keys. Note that the keys are camel-cased
+    strings, as is expected in a JSON-RPC request.
 
     * ``fromBlock``: ``integer/tag`` - (optional, default: "latest") Integer
       block number, or one of predefined block identifiers
@@ -1324,7 +1355,7 @@ Contracts
 
     :param abi: Application Binary Interface. Usually provided since an ``abi`` is required to interact with any contract.
     :type abi: ABI
-    :param asm: Asssembly code generated by the compiler
+    :param asm: Assembly code generated by the compiler
     :param ast: Abstract Syntax Tree of the contract generated by the compiler
     :param bytecode: Bytecode of the contract generated by the compiler
     :param bytecode_runtime: Bytecode stored at the contract address, excludes the constructor and initialization code

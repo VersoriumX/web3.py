@@ -6,21 +6,15 @@ from hexbytes import (
 import pytest_asyncio
 
 from web3 import (
+    AsyncWeb3,
     Web3,
 )
 from web3.datastructures import (
     AttributeDict,
 )
-from web3.eth import (
-    AsyncEth,
-)
 from web3.middleware import (
-    async_attrdict_middleware,
-    async_construct_result_generator_middleware,
-    async_local_filter_middleware,
-    attrdict_middleware,
-    construct_result_generator_middleware,
-    local_filter_middleware,
+    AttributeDictMiddleware,
+    LocalFilterMiddleware,
 )
 from web3.middleware.filter import (
     async_iter_latest_block_ranges,
@@ -88,28 +82,20 @@ def iter_block_number(start=0):
 
 
 @pytest.fixture(scope="function")
-def result_generator_middleware(iter_block_number):
-    return construct_result_generator_middleware(
-        {
+def w3(request_mocker, iter_block_number):
+    w3_base = Web3(provider=DummyProvider(), middleware=[])
+    w3_base.middleware_onion.add(AttributeDictMiddleware)
+    w3_base.middleware_onion.add(LocalFilterMiddleware)
+    with request_mocker(
+        w3_base,
+        mock_results={
             "eth_getLogs": lambda *_: FILTER_LOG,
             "eth_getBlockByNumber": lambda *_: {"hash": BLOCK_HASH},
             "net_version": lambda *_: 1,
             "eth_blockNumber": lambda *_: next(iter_block_number),
-        }
-    )
-
-
-@pytest.fixture(scope="function")
-def w3_base():
-    return Web3(provider=DummyProvider(), middlewares=[])
-
-
-@pytest.fixture(scope="function")
-def w3(w3_base, result_generator_middleware):
-    w3_base.middleware_onion.add(result_generator_middleware)
-    w3_base.middleware_onion.add(attrdict_middleware)
-    w3_base.middleware_onion.add(local_filter_middleware)
-    return w3_base
+        },
+    ):
+        yield w3_base
 
 
 @pytest.mark.parametrize(
@@ -142,8 +128,8 @@ def test_block_ranges(start, stop, expected):
     else:
         actual = tuple(block_ranges(start, stop))
         assert len(actual) == len(expected)
-        for actual, expected in zip(actual, expected):
-            assert actual == expected
+        for actual_item, expected_item in zip(actual, expected):
+            assert actual_item == expected_item
 
 
 @pytest.mark.parametrize(
@@ -226,7 +212,7 @@ def test_pending_block_filter_middleware(w3):
         w3.eth.filter("pending")
 
 
-def test_local_filter_middleware(w3, iter_block_number):
+def test_LocalFilterMiddleware(w3, iter_block_number):
     block_filter = w3.eth.filter("latest")
     block_filter.get_new_entries()
     iter_block_number.send(1)
@@ -266,30 +252,21 @@ class AsyncDummyProvider(AsyncBaseProvider):
 
 
 @pytest_asyncio.fixture(scope="function")
-async def async_result_generator_middleware(iter_block_number):
-    return await async_construct_result_generator_middleware(
-        {
+async def async_w3(request_mocker, iter_block_number):
+    async_w3_base = AsyncWeb3(provider=AsyncDummyProvider(), middleware=[])
+    async_w3_base.middleware_onion.add(AttributeDictMiddleware)
+    async_w3_base.middleware_onion.add(LocalFilterMiddleware)
+
+    async with request_mocker(
+        async_w3_base,
+        mock_results={
             "eth_getLogs": lambda *_: FILTER_LOG,
             "eth_getBlockByNumber": lambda *_: {"hash": BLOCK_HASH},
             "net_version": lambda *_: 1,
             "eth_blockNumber": lambda *_: next(iter_block_number),
-        }
-    )
-
-
-@pytest.fixture(scope="function")
-def async_w3_base():
-    return Web3(
-        provider=AsyncDummyProvider(), modules={"eth": (AsyncEth)}, middlewares=[]
-    )
-
-
-@pytest.fixture(scope="function")
-def async_w3(async_w3_base, async_result_generator_middleware):
-    async_w3_base.middleware_onion.add(async_result_generator_middleware)
-    async_w3_base.middleware_onion.add(async_attrdict_middleware)
-    async_w3_base.middleware_onion.add(async_local_filter_middleware)
-    return async_w3_base
+        },
+    ):
+        yield async_w3_base
 
 
 @pytest.mark.parametrize(
@@ -369,7 +346,7 @@ async def test_async_iter_latest_block_ranges(
 
 
 @pytest.mark.asyncio
-async def test_async_local_filter_middleware(async_w3, iter_block_number):
+async def test_async_LocalFilterMiddleware(async_w3, iter_block_number):
     block_filter = await async_w3.eth.filter("latest")
     await block_filter.get_new_entries()
     iter_block_number.send(1)

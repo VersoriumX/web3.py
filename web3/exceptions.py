@@ -1,6 +1,7 @@
 import datetime
 import time
 from typing import (
+    TYPE_CHECKING,
     Any,
     Dict,
     Optional,
@@ -13,7 +14,11 @@ from eth_utils import (
 
 from web3.types import (
     BlockData,
+    RPCResponse,
 )
+
+if TYPE_CHECKING:
+    import asyncio
 
 
 class Web3Exception(Exception):
@@ -30,6 +35,52 @@ class Web3Exception(Exception):
             # deal with other exceptions
     """
 
+    user_message: Optional[str] = None
+
+    def __init__(
+        self,
+        *args: Any,
+        user_message: Optional[str] = None,
+    ):
+        super().__init__(*args)
+
+        # Assign properties of Web3Exception
+        self.user_message = user_message
+
+
+class Web3AssertionError(Web3Exception, AssertionError):
+    """
+    A web3.py exception wrapper for `AssertionError`, for better control over
+    exception handling.
+    """
+
+
+class Web3ValueError(Web3Exception, ValueError):
+    """
+    A web3.py exception wrapper for `ValueError`, for better control over
+    exception handling.
+    """
+
+
+class Web3AttributeError(Web3Exception, AttributeError):
+    """
+    A web3.py exception wrapper for `AttributeError`, for better control over
+    exception handling.
+    """
+
+
+class Web3TypeError(Web3Exception, TypeError):
+    """
+    A web3.py exception wrapper for `TypeError`, for better control over
+    exception handling.
+    """
+
+
+class MethodNotSupported(Web3Exception):
+    """
+    Raised when a method is not supported by the provider.
+    """
+
 
 class BadFunctionCallOutput(Web3Exception):
     """
@@ -38,23 +89,17 @@ class BadFunctionCallOutput(Web3Exception):
     Most likely ABI mismatch.
     """
 
-    pass
 
-
-class BlockNumberOutofRange(Web3Exception):
+class BlockNumberOutOfRange(Web3Exception):
     """
     block_identifier passed does not match known block.
     """
-
-    pass
 
 
 class ProviderConnectionError(Web3Exception):
     """
     Raised when unable to connect to a provider
     """
-
-    pass
 
 
 class CannotHandleRequest(Web3Exception):
@@ -63,15 +108,11 @@ class CannotHandleRequest(Web3Exception):
     that the manager should proceed to the next provider.
     """
 
-    pass
-
 
 class TooManyRequests(Web3Exception):
     """
     Raised by a provider to signal that too many requests have been made consecutively.
     """
-
-    pass
 
 
 class MultipleFailedRequests(Web3Exception):
@@ -80,15 +121,11 @@ class MultipleFailedRequests(Web3Exception):
     (or similar) data have failed.
     """
 
-    pass
-
 
 class InvalidAddress(Web3Exception):
     """
     The supplied address does not have a valid checksum, as defined in EIP-55
     """
-
-    pass
 
 
 class NameNotFound(Web3Exception):
@@ -96,8 +133,6 @@ class NameNotFound(Web3Exception):
     Raised when a caller provides an Ethereum Name Service name that
     does not resolve to an address.
     """
-
-    pass
 
 
 class StaleBlockchain(Web3Exception):
@@ -128,16 +163,12 @@ class MismatchedABI(Web3Exception):
     attempt is made to access a function/event that does not exist in the ABI.
     """
 
-    pass
-
 
 class ABIEventFunctionNotFound(AttributeError, MismatchedABI):
     """
     Raised when an attempt is made to access an event
     that does not exist in the ABI.
     """
-
-    pass
 
 
 class ABIFunctionNotFound(AttributeError, MismatchedABI):
@@ -146,23 +177,18 @@ class ABIFunctionNotFound(AttributeError, MismatchedABI):
     that does not exist in the ABI.
     """
 
-    pass
-
 
 class FallbackNotFound(Web3Exception):
     """
     Raised when fallback function doesn't exist in contract.
     """
 
-    pass
 
-
-class Web3ValidationError(Web3Exception, ValidationError):
+# type ignored because subclassing ValidationError which has type Any
+class Web3ValidationError(Web3Exception, ValidationError):  # type: ignore[misc]
     """
     Raised when a supplied value is invalid.
     """
-
-    pass
 
 
 class ExtraDataLengthError(Web3ValidationError):
@@ -170,15 +196,11 @@ class ExtraDataLengthError(Web3ValidationError):
     Raised when an RPC call returns >32 bytes of extraData.
     """
 
-    pass
-
 
 class NoABIFunctionsFound(Web3Exception):
     """
     Raised when an ABI is present, but doesn't contain any functions.
     """
-
-    pass
 
 
 class NoABIFound(Web3Exception):
@@ -186,15 +208,11 @@ class NoABIFound(Web3Exception):
     Raised when no ABI is present.
     """
 
-    pass
-
 
 class NoABIEventsFound(Web3Exception):
     """
     Raised when an ABI doesn't contain any events.
     """
-
-    pass
 
 
 class InsufficientData(Web3Exception):
@@ -203,8 +221,6 @@ class InsufficientData(Web3Exception):
     complete a calculation
     """
 
-    pass
-
 
 class TimeExhausted(Web3Exception):
     """
@@ -212,31 +228,11 @@ class TimeExhausted(Web3Exception):
     result within a specified timeout.
     """
 
-    pass
-
-
-class TransactionNotFound(Web3Exception):
-    """
-    Raised when a tx hash used to lookup a tx in a jsonrpc call cannot be found.
-    """
-
-    pass
-
-
-class BlockNotFound(Web3Exception):
-    """
-    Raised when the block id used to lookup a block in a jsonrpc call cannot be found.
-    """
-
-    pass
-
 
 class InfuraProjectIdNotFound(Web3Exception):
     """
     Raised when there is no Infura Project Id set.
     """
-
-    pass
 
 
 class LogTopicError(Web3Exception):
@@ -244,15 +240,11 @@ class LogTopicError(Web3Exception):
     Raised when the number of log topics is mismatched.
     """
 
-    pass
-
 
 class InvalidEventABI(Web3Exception):
     """
     Raised when the event ABI is invalid.
     """
-
-    pass
 
 
 class ContractLogicError(Web3Exception):
@@ -265,6 +257,7 @@ class ContractLogicError(Web3Exception):
         message: Optional[str] = None,
         data: Optional[Union[str, Dict[str, str]]] = None,
     ):
+        super().__init__(message, data)
         self.message = message
         self.data = data
 
@@ -274,15 +267,11 @@ class ContractCustomError(ContractLogicError):
     Raised on a contract revert custom error
     """
 
-    pass
-
 
 class ContractPanicError(ContractLogicError):
     """
     Raised when a contract reverts with Panic, as of Solidity 0.8.0
     """
-
-    pass
 
 
 class OffchainLookup(ContractLogicError):
@@ -321,12 +310,68 @@ class BadResponseFormat(Web3Exception):
     Raised when a JSON-RPC response comes back in an unexpected format
     """
 
-    pass
+
+class TaskNotRunning(Web3Exception):
+    """
+    Used to signal between asyncio contexts that a task that is being awaited
+    is not currently running.
+    """
+
+    def __init__(
+        self, task: "asyncio.Task[Any]", message: Optional[str] = None
+    ) -> None:
+        self.task = task
+        if message is None:
+            message = f"Task {task} is not running."
+        self.message = message
+        super().__init__(message)
 
 
-class MethodUnavailable(Web3Exception):
+class Web3RPCError(Web3Exception):
+    """
+    Raised when a JSON-RPC response contains an error field.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        rpc_response: Optional[RPCResponse] = None,
+        user_message: Optional[str] = None,
+    ) -> None:
+        if user_message is None:
+            user_message = (
+                "An RPC error was returned by the node. Check the message provided in "
+                "the error and any available logs for more information."
+            )
+
+        super().__init__(
+            message,
+            user_message=user_message,
+        )
+        self.message = message
+        self.rpc_response = rpc_response
+
+
+class MethodUnavailable(Web3RPCError):
     """
     Raised when the method is not available on the node
     """
 
-    pass
+
+class TransactionNotFound(Web3RPCError):
+    """
+    Raised when a tx hash used to look up a tx in a jsonrpc call cannot be found.
+    """
+
+
+class TransactionIndexingInProgress(Web3RPCError):
+    """
+    Raised when a transaction receipt is not yet available due to transaction indexing
+    still being in progress.
+    """
+
+
+class BlockNotFound(Web3RPCError):
+    """
+    Raised when the block id used to look up a block in a jsonrpc call cannot be found.
+    """

@@ -28,6 +28,11 @@ from eth_utils import (
 from web3._utils.formatters import (
     recursive_map,
 )
+from web3.exceptions import (
+    Web3AssertionError,
+    Web3TypeError,
+    Web3ValueError,
+)
 
 # Hashable must be immutable:
 # "the implementation of hashable collections requires that a
@@ -85,7 +90,10 @@ class ReadableAttributeDict(Mapping[TKey, TValue]):
 
     @classmethod
     def recursive(cls, value: TValue) -> "ReadableAttributeDict[TKey, TValue]":
-        return recursive_map(cls._apply_if_mapping, value)
+        return cast(
+            "ReadableAttributeDict[TKey, TValue]",
+            recursive_map(cls._apply_if_mapping, value),
+        )
 
 
 class MutableAttributeDict(
@@ -100,19 +108,21 @@ class MutableAttributeDict(
 
 class AttributeDict(ReadableAttributeDict[TKey, TValue], Hashable):
     """
-    This provides superficial immutability, someone could hack around it
+    Provides superficial immutability, someone could hack around it
     """
 
     def __setattr__(self, attr: str, val: TValue) -> None:
         if attr == "__dict__":
             super().__setattr__(attr, val)
         else:
-            raise TypeError(
+            raise Web3TypeError(
                 "This data is immutable -- create a copy instead of modifying"
             )
 
     def __delattr__(self, key: str) -> None:
-        raise TypeError("This data is immutable -- create a copy instead of modifying")
+        raise Web3TypeError(
+            "This data is immutable -- create a copy instead of modifying"
+        )
 
     def __hash__(self) -> int:
         return hash(tuple(sorted(tupleize_lists_nested(self).items())))
@@ -143,7 +153,7 @@ def tupleize_lists_nested(d: Mapping[TKey, TValue]) -> AttributeDict[TKey, TValu
         elif isinstance(v, Mapping):
             ret[k] = tupleize_lists_nested(v)
         elif not isinstance(v, Hashable):
-            raise TypeError(f"Found unhashable type '{type(v).__name__}': {v}")
+            raise Web3TypeError(f"Found unhashable type '{type(v).__name__}': {v}")
         else:
             ret[k] = v
     return AttributeDict(ret)
@@ -172,11 +182,13 @@ class NamedElementOnion(Mapping[TKey, TValue]):
         if name is None:
             name = cast(TKey, element)
 
+        name = self._repr_if_not_hashable(name)
+
         if name in self._queue:
             if name is element:
-                raise ValueError("You can't add the same un-named instance twice")
+                raise Web3ValueError("You can't add the same un-named instance twice")
             else:
-                raise ValueError(
+                raise Web3ValueError(
                     "You can't add the same name again, use replace instead"
                 )
 
@@ -193,7 +205,7 @@ class NamedElementOnion(Mapping[TKey, TValue]):
         to calling :meth:`add` .
         """
         if not is_integer(layer):
-            raise TypeError("The layer for insertion must be an int.")
+            raise Web3TypeError("The layer for insertion must be an int.")
         elif layer != 0 and layer != len(self._queue):
             raise NotImplementedError(
                 f"You can only insert to the beginning or end of a {type(self)}, "
@@ -206,11 +218,14 @@ class NamedElementOnion(Mapping[TKey, TValue]):
         if layer == 0:
             if name is None:
                 name = cast(TKey, element)
+
+            name = self._repr_if_not_hashable(name)
+
             self._queue.move_to_end(name, last=False)
         elif layer == len(self._queue):
             return
         else:
-            raise AssertionError(
+            raise Web3AssertionError(
                 "Impossible to reach: earlier validation raises an error"
             )
 
@@ -218,49 +233,56 @@ class NamedElementOnion(Mapping[TKey, TValue]):
         self._queue.clear()
 
     def replace(self, old: TKey, new: TKey) -> TValue:
-        if old not in self._queue:
-            raise ValueError(
+        old_name = self._repr_if_not_hashable(old)
+
+        if old_name not in self._queue:
+            raise Web3ValueError(
                 "You can't replace unless one already exists, use add instead"
             )
-        to_be_replaced = self._queue[old]
+
+        to_be_replaced = self._queue[old_name]
         if to_be_replaced is old:
             # re-insert with new name in old slot
             self._replace_with_new_name(old, new)
         else:
-            self._queue[old] = new
+            self._queue[old_name] = new
         return to_be_replaced
 
+    def _repr_if_not_hashable(self, value: TKey) -> TKey:
+        try:
+            value.__hash__()
+        except TypeError:
+            value = cast(TKey, repr(value))
+        return value
+
     def remove(self, old: TKey) -> None:
-        if old not in self._queue:
-            raise ValueError("You can only remove something that has been added")
-        del self._queue[old]
+        old_name = self._repr_if_not_hashable(old)
+        if old_name not in self._queue:
+            raise Web3ValueError("You can only remove something that has been added")
+        del self._queue[old_name]
 
     @property
-    def middlewares(self) -> Sequence[Any]:
+    def middleware(self) -> Sequence[Any]:
         """
-        Returns middlewares in the appropriate order to be imported into a new Web3
+        Returns middleware in the appropriate order to be imported into a new Web3
         instance (reversed _queue order) as a list of (middleware, name) tuples.
         """
         return [(val, key) for key, val in reversed(self._queue.items())]
 
     def _replace_with_new_name(self, old: TKey, new: TKey) -> None:
-        self._queue[new] = new
+        old_name = self._repr_if_not_hashable(old)
+        new_name = self._repr_if_not_hashable(new)
+
+        self._queue[new_name] = new
         found_old = False
         for key in list(self._queue.keys()):
             if not found_old:
-                if key == old:
+                if key == old_name:
                     found_old = True
                 continue
-            elif key != new:
+            elif key != new_name:
                 self._queue.move_to_end(key)
-        del self._queue[old]
-
-    def __iter__(self) -> Iterator[TKey]:
-        elements = self._queue.values()
-        if not isinstance(elements, Sequence):
-            # type ignored b/c elements is set as _OrderedDictValuesView[Any] on 210
-            elements = list(elements)  # type: ignore
-        return iter(reversed(elements))
+        del self._queue[old_name]
 
     def __add__(self, other: Any) -> "NamedElementOnion[TKey, TValue]":
         if not isinstance(other, NamedElementOnion):
@@ -271,10 +293,12 @@ class NamedElementOnion(Mapping[TKey, TValue]):
         return NamedElementOnion(cast(List[Any], combined.items()))
 
     def __contains__(self, element: Any) -> bool:
-        return element in self._queue
+        element_name = self._repr_if_not_hashable(element)
+        return element_name in self._queue
 
     def __getitem__(self, element: TKey) -> TValue:
-        return self._queue[element]
+        element_name = self._repr_if_not_hashable(element)
+        return self._queue[element_name]
 
     def __len__(self) -> int:
         return len(self._queue)
@@ -284,3 +308,27 @@ class NamedElementOnion(Mapping[TKey, TValue]):
         if not isinstance(elements, Sequence):
             elements = list(elements)
         return iter(elements)
+
+    # --- iter and tupleize methods --- #
+
+    def _reversed_middleware(self) -> Iterator[TValue]:
+        elements = self._queue.values()
+        if not isinstance(elements, Sequence):
+            # type ignored b/c elements is set as _OrderedDictValuesView[Any] on 210
+            elements = list(elements)  # type: ignore
+        return reversed(elements)
+
+    def as_tuple_of_middleware(self) -> Tuple[TValue, ...]:
+        """
+        Helps with type hinting since we return `Iterator[TKey]` type, though it's
+        actually a `Iterator[TValue]` type, for the `__iter__()` method. This is in
+        order to satisfy the `Mapping` interface.
+        """
+        return tuple(self._reversed_middleware())
+
+    def __iter__(self) -> Iterator[TKey]:
+        # ``__iter__()`` for a ``Mapping``  returns ``Iterator[TKey]`` but this
+        # implementation returns ``Iterator[TValue]`` on reversed values (not keys).
+        # This leads to typing issues, so it's better to use
+        # ``as_tuple_of_middleware()`` to achieve the same result.
+        return iter(self._reversed_middleware())  # type: ignore

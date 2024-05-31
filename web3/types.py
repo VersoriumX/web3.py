@@ -5,10 +5,13 @@ from typing import (
     Coroutine,
     Dict,
     List,
+    Literal,
     NewType,
     Optional,
     Sequence,
+    Tuple,
     Type,
+    TypedDict,
     TypeVar,
     Union,
 )
@@ -25,16 +28,11 @@ from hexbytes import (
 )
 
 from web3._utils.compat import (
-    Literal,
     NotRequired,
-    TypedDict,
 )
 from web3._utils.function_identifiers import (
     FallbackFn,
     ReceiveFn,
-)
-from web3.datastructures import (
-    NamedElementOnion,
 )
 
 if TYPE_CHECKING:
@@ -46,8 +44,9 @@ if TYPE_CHECKING:
     )
 
 
-TReturn = TypeVar("TReturn")
+TFunc = TypeVar("TFunc", bound=Callable[..., Any])
 TParams = TypeVar("TParams")
+TReturn = TypeVar("TReturn")
 TValue = TypeVar("TValue")
 
 BlockParams = Literal["latest", "earliest", "pending", "safe", "finalized"]
@@ -138,6 +137,7 @@ TxData = TypedDict(
     "TxData",
     {
         "accessList": AccessList,
+        "blobVersionedHashes": Sequence[HexBytes],
         "blockHash": HexBytes,
         "blockNumber": BlockNumber,
         "chainId": int,
@@ -145,6 +145,7 @@ TxData = TypedDict(
         "from": ChecksumAddress,
         "gas": int,
         "gasPrice": Wei,
+        "maxFeePerBlobGas": Wei,
         "maxFeePerGas": Wei,
         "maxPriorityFeePerGas": Wei,
         "hash": HexBytes,
@@ -166,6 +167,8 @@ TxData = TypedDict(
 TxParams = TypedDict(
     "TxParams",
     {
+        "accessList": AccessList,
+        "blobVersionedHashes": Sequence[Union[str, HexStr, bytes, HexBytes]],
         "chainId": int,
         "data": Union[bytes, HexStr],
         # addr or ens
@@ -173,6 +176,7 @@ TxParams = TypedDict(
         "gas": int,
         # legacy pricing
         "gasPrice": Wei,
+        "maxFeePerBlobGas": Union[str, Wei],
         # dynamic fee pricing
         "maxFeePerGas": Union[str, Wei],
         "maxPriorityFeePerGas": Union[str, Wei],
@@ -186,15 +190,11 @@ TxParams = TypedDict(
 )
 
 
-WithdrawalData = TypedDict(
-    "WithdrawalData",
-    {
-        "index": int,
-        "validator_index": int,
-        "address": ChecksumAddress,
-        "amount": Gwei,
-    },
-)
+class WithdrawalData(TypedDict):
+    index: int
+    validator_index: int
+    address: ChecksumAddress
+    amount: Gwei
 
 
 class BlockData(TypedDict, total=False):
@@ -221,8 +221,11 @@ class BlockData(TypedDict, total=False):
     uncles: Sequence[HexBytes]
     withdrawals: Sequence[WithdrawalData]
     withdrawalsRoot: HexBytes
+    parentBeaconBlockRoot: HexBytes
+    blobGasUsed: int
+    excessBlobGas: int
 
-    # geth_poa_middleware replaces extraData w/ proofOfAuthorityData
+    # ExtraDataToPOAMiddleware replaces extraData w/ proofOfAuthorityData
     proofOfAuthorityData: HexBytes
 
 
@@ -294,7 +297,7 @@ RPCId = Optional[Union[int, str]]
 
 
 class RPCResponse(TypedDict, total=False):
-    error: Union[RPCError, str]
+    error: RPCError
     id: RPCId
     jsonrpc: Literal["2.0"]
     result: Any
@@ -316,15 +319,12 @@ class CreateAccessListResponse(TypedDict):
     gasUsed: int
 
 
-Middleware = Callable[[Callable[[RPCEndpoint, Any], RPCResponse], "Web3"], Any]
-AsyncMiddlewareCoroutine = Callable[
-    [RPCEndpoint, Any], Coroutine[Any, Any, RPCResponse]
+MakeRequestFn = Callable[[RPCEndpoint, Any], RPCResponse]
+MakeBatchRequestFn = Callable[[List[Tuple[RPCEndpoint, Any]]], List[RPCResponse]]
+AsyncMakeRequestFn = Callable[[RPCEndpoint, Any], Coroutine[Any, Any, RPCResponse]]
+AsyncMakeBatchRequestFn = Callable[
+    [List[Tuple[RPCEndpoint, Any]]], Coroutine[Any, Any, List[RPCResponse]]
 ]
-AsyncMiddleware = Callable[
-    [Callable[[RPCEndpoint, Any], RPCResponse], "AsyncWeb3"], Any
-]
-MiddlewareOnion = NamedElementOnion[str, Middleware]
-AsyncMiddlewareOnion = NamedElementOnion[str, AsyncMiddleware]
 
 
 class FormattersDict(TypedDict, total=False):
@@ -348,20 +348,15 @@ class FeeHistory(TypedDict):
     reward: List[List[Wei]]
 
 
-CallOverrideParams = TypedDict(
-    "CallOverrideParams",
-    {
-        "balance": Optional[Wei],
-        "nonce": Optional[int],
-        "code": Optional[Union[bytes, HexStr]],
-        "state": Optional[Dict[HexStr, HexStr]],
-        "stateDiff": Optional[Dict[HexStr, HexStr]],
-    },
-    total=False,
-)
+class StateOverrideParams(TypedDict, total=False):
+    balance: Optional[Wei]
+    nonce: Optional[int]
+    code: Optional[Union[bytes, HexStr]]
+    state: Optional[Dict[HexStr, HexStr]]
+    stateDiff: Optional[Dict[HexStr, HexStr]]
 
 
-CallOverride = Dict[ChecksumAddress, CallOverrideParams]
+StateOverride = Dict[ChecksumAddress, StateOverrideParams]
 
 
 GasPriceStrategy = Union[
@@ -390,6 +385,8 @@ TxReceipt = TypedDict(
         "type": int,
     },
 )
+
+BlockReceipts = List[TxReceipt]
 
 
 class SignedTx(TypedDict, total=False):

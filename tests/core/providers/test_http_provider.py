@@ -9,6 +9,7 @@ from requests.adapters import (
 
 from web3 import (
     Web3,
+    __version__ as web3py_version,
 )
 from web3._utils import (
     request,
@@ -22,16 +23,14 @@ from web3.exceptions import (
 from web3.geth import (
     Geth,
     GethAdmin,
-    GethPersonal,
     GethTxPool,
 )
 from web3.middleware import (
-    abi_middleware,
-    attrdict_middleware,
-    buffered_gas_estimate_middleware,
-    gas_price_strategy_middleware,
-    name_to_address_middleware,
-    validation_middleware,
+    AttributeDictMiddleware,
+    BufferedGasEstimateMiddleware,
+    ENSNameToAddressMiddleware,
+    GasPriceStrategyMiddleware,
+    ValidationMiddleware,
 )
 from web3.net import (
     Net,
@@ -59,7 +58,7 @@ def test_init_kwargs():
     assert w3.manager.provider == provider
 
 
-def test_web3_with_http_provider_has_default_middlewares_and_modules() -> None:
+def test_web3_with_http_provider_has_default_middleware_and_modules() -> None:
     adapter = HTTPAdapter(pool_connections=20, pool_maxsize=20)
     session = Session()
     session.mount("http://", adapter)
@@ -73,26 +72,19 @@ def test_web3_with_http_provider_has_default_middlewares_and_modules() -> None:
     assert isinstance(w3.net, Net)
     assert isinstance(w3.geth, Geth)
     assert isinstance(w3.geth.admin, GethAdmin)
-    assert isinstance(w3.geth.personal, GethPersonal)
     assert isinstance(w3.geth.txpool, GethTxPool)
 
     # assert default middleware
 
     # the following length check should fail and will need to be added to once more
-    # middlewares are added to the defaults
-    assert len(w3.middleware_onion.middlewares) == 6
+    # middleware are added to the defaults
+    assert len(w3.middleware_onion.middleware) == 5
 
-    assert (
-        w3.middleware_onion.get("gas_price_strategy") == gas_price_strategy_middleware
-    )
-    assert (
-        w3.middleware_onion.get("name_to_address").__name__
-        == name_to_address_middleware(w3).__name__
-    )
-    assert w3.middleware_onion.get("attrdict") == attrdict_middleware
-    assert w3.middleware_onion.get("validation") == validation_middleware
-    assert w3.middleware_onion.get("gas_estimate") == buffered_gas_estimate_middleware
-    assert w3.middleware_onion.get("abi") == abi_middleware
+    assert w3.middleware_onion.get("gas_price_strategy") == GasPriceStrategyMiddleware
+    assert w3.middleware_onion.get("ens_name_to_address") == ENSNameToAddressMiddleware
+    assert w3.middleware_onion.get("attrdict") == AttributeDictMiddleware
+    assert w3.middleware_onion.get("validation") == ValidationMiddleware
+    assert w3.middleware_onion.get("gas_estimate") == BufferedGasEstimateMiddleware
 
 
 def test_user_provided_session():
@@ -110,3 +102,14 @@ def test_user_provided_session():
     assert isinstance(adapter, HTTPAdapter)
     assert adapter._pool_connections == 20
     assert adapter._pool_maxsize == 20
+
+
+def test_get_request_headers():
+    provider = HTTPProvider()
+    headers = provider.get_request_headers()
+    assert len(headers) == 2
+    assert headers["Content-Type"] == "application/json"
+    assert (
+        headers["User-Agent"] == f"web3.py/{web3py_version}/"
+        f"{HTTPProvider.__module__}.{HTTPProvider.__qualname__}"
+    )

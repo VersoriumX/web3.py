@@ -1,3 +1,5 @@
+import collections
+import itertools
 import pytest
 
 from eth_utils import (
@@ -23,14 +25,15 @@ from web3.exceptions import (
     TransactionNotFound,
     Web3ValidationError,
 )
-from web3.middleware import (
-    construct_result_generator_middleware,
-)
-from web3.middleware.simulate_unmined_transaction import (
-    unmined_receipt_simulator_middleware,
-)
 
 RECEIPT_TIMEOUT = 0.2
+
+
+def _tx_indexing_response_iterator():
+    while True:
+        yield {"error": {"message": "transaction indexing in progress"}}
+        yield {"error": {"message": "transaction indexing in progress"}}
+        yield {"result": {"status": "0x1"}}
 
 
 @pytest.mark.parametrize(
@@ -176,8 +179,9 @@ def test_passing_string_to_to_hex(w3):
         w3.eth.wait_for_transaction_receipt(transaction_hash, timeout=RECEIPT_TIMEOUT)
 
 
-def test_unmined_transaction_wait_for_receipt(w3):
-    w3.middleware_onion.add(unmined_receipt_simulator_middleware)
+def test_unmined_transaction_wait_for_receipt(w3, request_mocker):
+    receipt_counters = collections.defaultdict(itertools.count)
+
     txn_hash = w3.eth.send_transaction(
         {
             "from": w3.eth.coinbase,
@@ -185,17 +189,46 @@ def test_unmined_transaction_wait_for_receipt(w3):
             "value": 123457,
         }
     )
-    with pytest.raises(TransactionNotFound):
-        w3.eth.get_transaction_receipt(txn_hash)
+    unmocked_make_request = w3.provider.make_request
 
-    txn_receipt = w3.eth.wait_for_transaction_receipt(txn_hash)
-    assert txn_receipt["transactionHash"] == txn_hash
-    assert txn_receipt["blockHash"] is not None
+    with request_mocker(
+        w3,
+        mock_results={
+            RPC.eth_getTransactionReceipt: lambda method, params: (
+                None
+                if next(receipt_counters[params[0]]) < 5
+                else unmocked_make_request(method, params)["result"]
+            )
+        },
+    ):
+        with pytest.raises(TransactionNotFound):
+            w3.eth.get_transaction_receipt(txn_hash)
+
+        txn_receipt = w3.eth.wait_for_transaction_receipt(txn_hash)
+        assert txn_receipt["transactionHash"] == txn_hash
+        assert txn_receipt["blockHash"] is not None
 
 
-def test_get_transaction_formatters(w3):
+def test_eth_wait_for_transaction_receipt_transaction_indexing_in_progress(
+    w3, request_mocker
+):
+    i = _tx_indexing_response_iterator()
+    with request_mocker(
+        w3,
+        mock_responses={"eth_getTransactionReceipt": lambda *_: next(i)},
+    ):
+        receipt = w3.eth.wait_for_transaction_receipt(f"0x{'00' * 32}")
+        assert receipt == {"status": 1}
+
+
+def test_get_transaction_formatters(w3, request_mocker):
     non_checksummed_addr = "0xB2930B35844A230F00E51431ACAE96FE543A0347"  # all uppercase
     unformatted_transaction = {
+        "blobVersionedHashes": [
+            "0x01b8c5b09810b5fc07355d3da42e2c3a3e200c1d9a678491b7e8e256fc50cc4f",
+            "0x015b4c8cc4f86aa2d2cf9e9ce97fca704a11a6c20f6b1d6c00a6e15f6d60a6df",
+            "0x01878f80eaf10be1a6f618e6f8c071b10a6c14d9b89a3bf2a3f3cf2db6c5681d",
+        ],
         "blockHash": (
             "0x849044202a39ae36888481f90d62c3826bca8269c2716d7a38696b4f45e61d83"
         ),
@@ -204,6 +237,7 @@ def test_get_transaction_formatters(w3):
         "nonce": "0x0",
         "gas": "0x4c4b40",
         "gasPrice": "0x1",
+        "maxFeePerBlobGas": "0x1",
         "maxFeePerGas": "0x1",
         "maxPriorityFeePerGas": "0x1",
         "value": "0x1",
@@ -233,30 +267,37 @@ def test_get_transaction_formatters(w3):
             },
         ],
         "input": "0x5b34b966",
-        "data": "0x5b34b966",
     }
 
-    result_middleware = construct_result_generator_middleware(
-        {
-            RPC.eth_getTransactionByHash: lambda *_: unformatted_transaction,
-        }
-    )
-    w3.middleware_onion.inject(result_middleware, "result_middleware", layer=0)
-
-    # test against eth_getTransactionByHash
-    received_tx = w3.eth.get_transaction("")
+    with request_mocker(
+        w3, mock_results={RPC.eth_getTransactionByHash: unformatted_transaction}
+    ):
+        # test against eth_getTransactionByHash
+        received_tx = w3.eth.get_transaction("")
 
     checksummed_addr = to_checksum_address(non_checksummed_addr)
     assert non_checksummed_addr != checksummed_addr
 
     expected = AttributeDict(
         {
+            "blobVersionedHashes": [
+                HexBytes(
+                    "0x01b8c5b09810b5fc07355d3da42e2c3a3e200c1d9a678491b7e8e256fc50cc4f"
+                ),
+                HexBytes(
+                    "0x015b4c8cc4f86aa2d2cf9e9ce97fca704a11a6c20f6b1d6c00a6e15f6d60a6df"
+                ),
+                HexBytes(
+                    "0x01878f80eaf10be1a6f618e6f8c071b10a6c14d9b89a3bf2a3f3cf2db6c5681d"
+                ),
+            ],
             "blockHash": HexBytes(unformatted_transaction["blockHash"]),
             "blockNumber": to_int(hexstr=unformatted_transaction["blockNumber"]),
             "transactionIndex": 0,
             "nonce": 0,
             "gas": to_int(hexstr=unformatted_transaction["gas"]),
             "gasPrice": 1,
+            "maxFeePerBlobGas": 1,
             "maxFeePerGas": 1,
             "maxPriorityFeePerGas": 1,
             "value": 1,
@@ -294,9 +335,92 @@ def test_get_transaction_formatters(w3):
                 ),
             ],
             "input": HexBytes(unformatted_transaction["input"]),
-            "data": HexBytes(unformatted_transaction["data"]),
         }
     )
 
     assert received_tx == expected
-    w3.middleware_onion.remove("result_middleware")
+
+
+def test_eth_send_raw_blob_transaction(w3):
+    # `eth-tester` account #1's pkey is "0x00000000...01"
+    acct = w3.eth.account.from_key(f"0x{'00' * 31}01")
+
+    text = "We are the music makers and we are the dreamers of dreams."
+    encoded_text = w3.codec.encode(["string"], [text])
+    # Blobs contain 4096 32-byte field elements. Subtract the length of the encoded text
+    # divided into 32-byte chunks from 4096 and pad the rest with zeros.
+    blob_data = (b"\x00" * 32 * (4096 - len(encoded_text) // 32)) + encoded_text
+
+    tx = {
+        "type": 3,
+        "chainId": 1337,
+        "from": acct.address,
+        "to": "0xb45BEc6eeCA2a09f4689Dd308F550Ad7855051B5",
+        "value": 0,
+        "gas": 21000,
+        "maxFeePerGas": 10**10,
+        "maxPriorityFeePerGas": 10**10,
+        "maxFeePerBlobGas": 10**10,
+        "nonce": w3.eth.get_transaction_count(acct.address),
+    }
+
+    signed = acct.sign_transaction(tx, blobs=[blob_data])
+
+    tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
+    transaction = w3.eth.get_transaction(tx_hash)
+
+    assert len(transaction["blobVersionedHashes"]) == 1
+    assert transaction["blobVersionedHashes"][0] == HexBytes(
+        "0x0127c38bcad458d932e828b580b9ad97310be01407dfa0ed88118735980a3e9a"
+    )
+
+
+# --- async --- #
+
+
+@pytest.mark.asyncio
+async def test_async_wait_for_transaction_receipt_transaction_indexing_in_progress(
+    async_w3, request_mocker
+):
+    i = _tx_indexing_response_iterator()
+    async with request_mocker(
+        async_w3,
+        mock_responses={"eth_getTransactionReceipt": lambda *_: next(i)},
+    ):
+        receipt = await async_w3.eth.wait_for_transaction_receipt(f"0x{'00' * 32}")
+        assert receipt == {"status": 1}
+
+
+@pytest.mark.asyncio
+async def test_async_send_raw_blob_transaction(async_w3):
+    # `eth-tester` account #1's pkey is "0x00000000...01"
+    acct = async_w3.eth.account.from_key(f"0x{'00' * 31}01")
+
+    text = "We are the music makers and we are the dreamers of dreams."
+    encoded_text = async_w3.codec.encode(["string"], [text])
+    # Blobs contain 4096 32-byte field elements. Subtract the length of the encoded text
+    # divided into 32-byte chunks from 4096 and pad the rest with zeros.
+    blob_data = (b"\x00" * 32 * (4096 - len(encoded_text) // 32)) + encoded_text
+
+    tx = {
+        "type": 3,
+        "chainId": 1337,
+        "from": acct.address,
+        "to": "0xb45BEc6eeCA2a09f4689Dd308F550Ad7855051B5",
+        "value": 0,
+        "gas": 21000,
+        "maxFeePerGas": 10**10,
+        "maxPriorityFeePerGas": 10**10,
+        "maxFeePerBlobGas": 10**10,
+        "nonce": await async_w3.eth.get_transaction_count(acct.address),
+    }
+
+    signed = acct.sign_transaction(tx, blobs=[blob_data])
+
+    tx_hash = await async_w3.eth.send_raw_transaction(signed.raw_transaction)
+    transaction = await async_w3.eth.get_transaction(tx_hash)
+
+    assert len(transaction["blobVersionedHashes"]) == 1
+    assert transaction["blobVersionedHashes"][0] == HexBytes(
+        "0x0127c38bcad458d932e828b580b9ad97310be01407dfa0ed88118735980a3e9a"
+    )

@@ -84,8 +84,7 @@ def _get_raw_miner_data(
     latest = w3.eth.get_block("latest", full_transactions=True)
 
     for transaction in latest["transactions"]:
-        # type ignored b/c actual transaction is TxData not HexBytes
-        yield (latest["miner"], latest["hash"], transaction["gasPrice"])  # type: ignore
+        yield (latest["miner"], latest["hash"], transaction["gasPrice"])
 
     block = latest
 
@@ -97,8 +96,7 @@ def _get_raw_miner_data(
         # block numbers to make caching the data easier to implement.
         block = w3.eth.get_block(block["parentHash"], full_transactions=True)
         for transaction in block["transactions"]:
-            # type ignored b/c actual transaction is TxData not HexBytes
-            yield (block["miner"], block["hash"], transaction["gasPrice"])  # type: ignore  # noqa: E501
+            yield (block["miner"], block["hash"], transaction["gasPrice"])
 
 
 def _aggregate_miner_data(
@@ -112,11 +110,11 @@ def _aggregate_miner_data(
             # types ignored b/c mypy has trouble inferring gas_prices: Sequence[Wei]
             price_percentile = percentile(gas_prices, percentile=20)  # type: ignore
         except InsufficientData:
-            price_percentile = min(gas_prices)  # type: ignore
+            price_percentile = min(gas_prices)
         yield MinerData(
             miner,
             len(set(block_hashes)),
-            min(gas_prices),  # type: ignore
+            min(gas_prices),
             price_percentile,
         )
 

@@ -40,17 +40,14 @@ from web3._utils.formatters import (
 from web3._utils.method_formatters import (
     apply_list_to_array_formatter,
 )
-from web3.middleware import (
-    construct_formatting_middleware,
+from web3.middleware.base import (
+    Web3Middleware,
 )
 from web3.middleware.formatting import (
-    async_construct_formatting_middleware,
+    FormattingMiddlewareBuilder,
 )
 from web3.types import (
-    AsyncMiddlewareCoroutine,
-    Middleware,
     RPCEndpoint,
-    RPCResponse,
     TxParams,
 )
 
@@ -75,7 +72,9 @@ is_not_named_block = complement(is_named_block)
 # --- Request Mapping --- #
 
 TRANSACTION_REQUEST_KEY_MAPPING = {
+    "blobVersionedHashes": "blob_versioned_hashes",
     "gasPrice": "gas_price",
+    "maxFeePerBlobGas": "max_fee_per_blob_gas",
     "maxFeePerGas": "max_fee_per_gas",
     "maxPriorityFeePerGas": "max_priority_fee_per_gas",
     "accessList": "access_list",
@@ -93,7 +92,7 @@ TRANSACTION_REQUEST_FORMATTERS = {
     "maxFeePerGas": to_integer_if_hex,
     "maxPriorityFeePerGas": to_integer_if_hex,
     "accessList": apply_list_to_array_formatter(
-        (apply_key_map({"storageKeys": "storage_keys"}))
+        apply_key_map({"storageKeys": "storage_keys"})
     ),
 }
 transaction_request_formatter = apply_formatters_to_dict(TRANSACTION_REQUEST_FORMATTERS)
@@ -111,14 +110,14 @@ filter_request_remapper = apply_key_map(FILTER_REQUEST_KEY_MAPPING)
 
 
 FILTER_REQUEST_FORMATTERS = {
-    "fromBlock": to_integer_if_hex,
-    "toBlock": to_integer_if_hex,
+    "from_block": to_integer_if_hex,
+    "to_block": to_integer_if_hex,
 }
 filter_request_formatter = apply_formatters_to_dict(FILTER_REQUEST_FORMATTERS)
 
 filter_request_transformer = compose(
-    filter_request_remapper,
     filter_request_formatter,
+    filter_request_remapper,
 )
 
 
@@ -126,14 +125,17 @@ filter_request_transformer = compose(
 
 TRANSACTION_RESULT_KEY_MAPPING = {
     "access_list": "accessList",
+    "blob_versioned_hashes": "blobVersionedHashes",
     "block_hash": "blockHash",
     "block_number": "blockNumber",
     "chain_id": "chainId",
     "gas_price": "gasPrice",
+    "max_fee_per_blob_gas": "maxFeePerBlobGas",
     "max_fee_per_gas": "maxFeePerGas",
     "max_priority_fee_per_gas": "maxPriorityFeePerGas",
     "transaction_hash": "transactionHash",
     "transaction_index": "transactionIndex",
+    "data": "input",
 }
 transaction_result_remapper = apply_key_map(TRANSACTION_RESULT_KEY_MAPPING)
 
@@ -166,6 +168,8 @@ RECEIPT_RESULT_KEY_MAPPING = {
     "effective_gas_price": "effectiveGasPrice",
     "transaction_hash": "transactionHash",
     "transaction_index": "transactionIndex",
+    "blob_gas_used": "blobGasUsed",
+    "blob_gas_price": "blobGasPrice",
 }
 receipt_result_remapper = apply_key_map(RECEIPT_RESULT_KEY_MAPPING)
 
@@ -188,11 +192,13 @@ BLOCK_RESULT_KEY_MAPPING = {
     # JSON-RPC spec still says miner
     "coinbase": "miner",
     "withdrawals_root": "withdrawalsRoot",
+    "parent_beacon_block_root": "parentBeaconBlockRoot",
+    "blob_gas_used": "blobGasUsed",
+    "excess_blob_gas": "excessBlobGas",
 }
 block_result_remapper = apply_key_map(BLOCK_RESULT_KEY_MAPPING)
 
 BLOCK_RESULT_FORMATTERS = {
-    "logsBloom": integer_to_hex,
     "withdrawals": apply_list_to_array_formatter(
         apply_key_map({"validator_index": "validatorIndex"}),
     ),
@@ -204,6 +210,16 @@ RECEIPT_RESULT_FORMATTERS = {
     "logs": apply_list_to_array_formatter(log_result_remapper),
 }
 receipt_result_formatter = apply_formatters_to_dict(RECEIPT_RESULT_FORMATTERS)
+
+
+fee_history_result_remapper = apply_key_map(
+    {
+        "oldest_block": "oldestBlock",
+        "base_fee_per_gas": "baseFeePerGas",
+        "gas_used_ratio": "gasUsedRatio",
+    }
+)
+
 
 request_formatters = {
     # Eth
@@ -263,22 +279,20 @@ request_formatters = {
         identity,
         apply_formatter_if(is_not_named_block, to_integer_if_hex),
     ),
+    RPCEndpoint("eth_feeHistory"): apply_formatters_to_args(
+        to_integer_if_hex,
+        apply_formatter_if(is_not_named_block, to_integer_if_hex),
+    ),
     # EVM
     RPCEndpoint("evm_revert"): apply_formatters_to_args(hex_to_integer),
-    # Personal
-    RPCEndpoint("personal_sendTransaction"): apply_formatters_to_args(
-        transaction_request_transformer,
-        identity,
-    ),
 }
+
 result_formatters: Optional[Dict[RPCEndpoint, Callable[..., Any]]] = {
     RPCEndpoint("eth_getBlockByHash"): apply_formatter_if(
-        is_dict,
-        compose(block_result_remapper, block_result_formatter),
+        is_dict, compose(block_result_remapper, block_result_formatter)
     ),
     RPCEndpoint("eth_getBlockByNumber"): apply_formatter_if(
-        is_dict,
-        compose(block_result_remapper, block_result_formatter),
+        is_dict, compose(block_result_remapper, block_result_formatter)
     ),
     RPCEndpoint("eth_getBlockTransactionCountByHash"): apply_formatter_if(
         is_dict,
@@ -311,14 +325,12 @@ result_formatters: Optional[Dict[RPCEndpoint, Callable[..., Any]]] = {
         is_array_of_dicts,
         apply_list_to_array_formatter(log_result_remapper),
     ),
+    RPCEndpoint("eth_feeHistory"): apply_formatter_if(
+        is_dict, fee_history_result_remapper
+    ),
     # EVM
     RPCEndpoint("evm_snapshot"): integer_to_hex,
 }
-
-
-ethereum_tester_middleware = construct_formatting_middleware(
-    request_formatters=request_formatters, result_formatters=result_formatters
-)
 
 
 def guess_from(w3: "Web3", _: TxParams) -> ChecksumAddress:
@@ -342,38 +354,7 @@ def fill_default(
         return assoc(transaction, field, guess_val)
 
 
-def default_transaction_fields_middleware(
-    make_request: Callable[[RPCEndpoint, Any], Any], w3: "Web3"
-) -> Callable[[RPCEndpoint, Any], RPCResponse]:
-    def middleware(method: RPCEndpoint, params: Any) -> RPCResponse:
-        if method in (
-            "eth_call",
-            "eth_estimateGas",
-            "eth_sendTransaction",
-            "eth_createAccessList",
-        ):
-            fill_default_from = fill_default("from", guess_from, w3)
-            filled_transaction = pipe(
-                params[0],
-                fill_default_from,
-            )
-            return make_request(method, [filled_transaction] + list(params)[1:])
-        else:
-            return make_request(method, params)
-
-    return middleware
-
-
 # --- async --- #
-
-
-async def async_ethereum_tester_middleware(  # type: ignore
-    make_request, web3: "AsyncWeb3"
-) -> Middleware:
-    middleware = await async_construct_formatting_middleware(
-        request_formatters=request_formatters, result_formatters=result_formatters
-    )
-    return await middleware(make_request, web3)
 
 
 async def async_guess_from(
@@ -403,20 +384,43 @@ async def async_fill_default(
         return assoc(transaction, field, guess_val)
 
 
-async def async_default_transaction_fields_middleware(
-    make_request: Callable[[RPCEndpoint, Any], Any], async_w3: "AsyncWeb3"
-) -> AsyncMiddlewareCoroutine:
-    async def middleware(method: RPCEndpoint, params: Any) -> RPCResponse:
+# --- define middleware --- #
+
+
+class DefaultTransactionFieldsMiddleware(Web3Middleware):
+    def request_processor(self, method: "RPCEndpoint", params: Any) -> Any:
         if method in (
             "eth_call",
             "eth_estimateGas",
             "eth_sendTransaction",
+            "eth_createAccessList",
+        ):
+            fill_default_from = fill_default("from", guess_from, self._w3)
+            filled_transaction = pipe(
+                params[0],
+                fill_default_from,
+            )
+            params = [filled_transaction] + list(params)[1:]
+        return method, params
+
+    # --- async --- #
+
+    async def async_request_processor(self, method: "RPCEndpoint", params: Any) -> Any:
+        if method in (
+            "eth_call",
+            "eth_estimateGas",
+            "eth_sendTransaction",
+            "eth_createAccessList",
         ):
             filled_transaction = await async_fill_default(
-                "from", async_guess_from, async_w3, params[0]
+                "from", async_guess_from, self._w3, params[0]
             )
-            return await make_request(method, [filled_transaction] + list(params)[1:])
-        else:
-            return await make_request(method, params)
+            params = [filled_transaction] + list(params)[1:]
 
-    return middleware
+        return method, params
+
+
+ethereum_tester_middleware = FormattingMiddlewareBuilder.build(
+    request_formatters=request_formatters, result_formatters=result_formatters
+)
+default_transaction_fields_middleware = DefaultTransactionFieldsMiddleware

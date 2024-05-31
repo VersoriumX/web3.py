@@ -164,7 +164,7 @@ You can use ``tox`` to run all the tests for a given version of Python:
 
 .. code:: sh
 
-   $ tox -e py37-core
+   $ tox -e py38-core
 
 
 Linting is also performed by the CI. You can save yourself some time by checking for
@@ -373,13 +373,13 @@ Geth Fixtures
 
    .. code:: sh
 
-       $ python -m geth.install v1.11.6
+       $ python -m geth.install v1.13.14
 
 2. Specify the Geth binary and run the fixture creation script (from within the web3.py directory):
 
    .. code:: sh
 
-       $ GETH_BINARY=~/.py-geth/geth-v1.11.6/bin/geth python ./tests/integration/generate_fixtures/go_ethereum.py ./tests/integration/geth-1.11.6-fixture
+       $ GETH_BINARY=~/.py-geth/geth-v1.13.14/bin/geth python ./tests/integration/generate_fixtures/go_ethereum.py ./tests/integration/geth-1.13.14-fixture
 
 3. The output of this script is your fixture, a zip file, which is now stored in ``/tests/integration/``.
    Update the ``/tests/integration/go_ethereum/conftest.py`` and
@@ -512,9 +512,9 @@ version explicitly, like ``make release bump="--new-version 4.0.0-alpha.1 devnum
 
 
 .. _Python Discord server: https://discord.gg/GHryRvPB84
-.. _style guide: https://github.com/ethereum/ethereum-dev-tactical-manual/blob/master/style-guide.md
+.. _style guide: https://github.com/ethereum/snake-charmers-tactical-manual/blob/main/style-guide.md
 .. _type hints: https://www.python.org/dev/peps/pep-0484/
-.. _how to create documentation: https://github.com/ethereum/snake-charmers-tactical-manual/blob/master/documentation.md
+.. _how to create documentation: https://github.com/ethereum/snake-charmers-tactical-manual/blob/main/documentation.md
 .. _working on pull requests: https://help.github.com/articles/about-pull-requests/
 .. _py-geth: https://github.com/ethereum/py-geth
 .. _pytest documentation: https://docs.pytest.org/en/latest

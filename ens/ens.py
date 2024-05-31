@@ -46,6 +46,7 @@ from .constants import (
 )
 from .exceptions import (
     AddressMismatch,
+    ENSValueError,
     ResolverNotFound,
     UnauthorizedError,
     UnownedName,
@@ -71,11 +72,13 @@ if TYPE_CHECKING:
         Contract,
         ContractFunction,
     )
+    from web3.middleware.base import (  # noqa: F401
+        Middleware,
+    )
     from web3.providers import (  # noqa: F401
         BaseProvider,
     )
     from web3.types import (  # noqa: F401
-        Middleware,
         TxParams,
     )
 
@@ -86,7 +89,7 @@ class ENS(BaseENS):
     like getting the address for a name.
 
     Unless otherwise specified, all addresses are assumed to be a `str` in
-    `checksum format <https://github.com/ethereum/EIPs/blob/master/EIPS/eip-155.md>`_,
+    `checksum format <https://github.com/ethereum/EIPs/blob/master/EIPS/eip-155.md>`_,  # blocklint: pragma # noqa: E501
     like: ``"0x314159265dD8dbb310642f98f50C066173C1259b"``
     """
 
@@ -95,9 +98,9 @@ class ENS(BaseENS):
 
     def __init__(
         self,
-        provider: "BaseProvider" = cast("BaseProvider", default),
+        provider: "BaseProvider" = None,
         addr: ChecksumAddress = None,
-        middlewares: Optional[Sequence[Tuple["Middleware", str]]] = None,
+        middleware: Optional[Sequence[Tuple["Middleware", str]]] = None,
     ) -> None:
         """
         :param provider: a single provider used to connect to Ethereum
@@ -106,7 +109,8 @@ class ENS(BaseENS):
             If not provided, ENS.py will default to the mainnet ENS
             registry address.
         """
-        self.w3 = init_web3(provider, middlewares)
+        provider = provider or cast("BaseProvider", default)
+        self.w3 = init_web3(provider, middleware)
 
         ens_addr = addr if addr else ENS_MAINNET_ADDR
         self.ens = self.w3.eth.contract(abi=abis.ENS, address=ens_addr)
@@ -127,8 +131,8 @@ class ENS(BaseENS):
             provided, defaults to the mainnet ENS registry address.
         """
         provider = w3.manager.provider
-        middlewares = w3.middleware_onion.middlewares
-        ns = cls(cast("BaseProvider", provider), addr=addr, middlewares=middlewares)
+        middleware = w3.middleware_onion.middleware
+        ns = cls(cast("BaseProvider", provider), addr=addr, middleware=middleware)
 
         # inherit strict bytes checking from w3 instance
         ns.strict_bytes_type_checking = w3.strict_bytes_type_checking
@@ -168,7 +172,7 @@ class ENS(BaseENS):
     def setup_address(
         self,
         name: str,
-        address: Union[Address, ChecksumAddress, HexAddress] = cast(
+        address: Union[Address, ChecksumAddress, HexAddress] = cast(  # noqa: B008
             ChecksumAddress, default
         ),
         coin_type: Optional[int] = None,
@@ -206,7 +210,7 @@ class ENS(BaseENS):
         elif is_binary_address(address):
             address = to_checksum_address(cast(str, address))
         elif not is_checksum_address(address):
-            raise ValueError("You must supply the address in checksum format")
+            raise ENSValueError("You must supply the address in checksum format")
         if self.address(name) == address:
             return None
         if address is None:
@@ -282,7 +286,7 @@ class ENS(BaseENS):
             if is_binary_address(address):
                 address = to_checksum_address(address)
             if not is_checksum_address(address):
-                raise ValueError("You must supply the address in checksum format")
+                raise ENSValueError("You must supply the address in checksum format")
             self._assert_control(address, name)
             if not resolved:
                 self.setup_address(name, address, transact=transact)
@@ -305,7 +309,7 @@ class ENS(BaseENS):
     def setup_owner(
         self,
         name: str,
-        new_owner: ChecksumAddress = cast(ChecksumAddress, default),
+        new_owner: ChecksumAddress = None,
         transact: Optional["TxParams"] = None,
     ) -> Optional[ChecksumAddress]:
         """
@@ -332,6 +336,7 @@ class ENS(BaseENS):
         :raises UnauthorizedError: if ``'from'`` in `transact` does not own `name`
         :returns: the new owner's address
         """
+        new_owner = new_owner or cast(ChecksumAddress, default)
         if not transact:
             transact = {}
 
@@ -475,7 +480,7 @@ class ENS(BaseENS):
         if _resolver_supports_interface(resolver, ENS_EXTENDED_RESOLVER_INTERFACE_ID):
             contract_func_with_args = (fn_name, [node])
 
-            calldata = resolver.encodeABI(*contract_func_with_args)
+            calldata = resolver.encode_abi(*contract_func_with_args)
             contract_call_result = resolver.caller.resolve(
                 ens_encode_name(normal_name),
                 calldata,
